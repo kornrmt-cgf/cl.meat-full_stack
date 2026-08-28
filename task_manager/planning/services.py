@@ -257,13 +257,44 @@ def _recalculate_queue_positions():
 
 # ── Cancel ──
 
+def _cancel_queue_entries_for_plan(plan, actor='', reason=''):
+    """
+    Cancel all active queue entries for a plan WITHOUT its own transaction.
+
+    Must be called within an existing transaction.atomic block.
+    If any entry fails to cancel, the entire outer transaction rolls back.
+    """
+    from common.state_machine import transition_package
+
+    active_entries = list(ThawQueueEntry.objects.filter(
+        rotation_plan=plan,
+        status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START]
+    ))
+
+    for entry in active_entries:
+        package = entry.package
+        if package.current_state != PackageState.THAW_QUEUED:
+            raise ValueError(
+                f"Cannot cancel queue entry for {package}: "
+                f"state is {package.current_state}, expected THAW_QUEUED"
+            )
+        entry.status = QueueStatus.CANCELLED
+        entry.save(update_fields=['status', 'updated_at'])
+        transition_package(package, 'PACKED', actor=actor,
+                          reason=reason or 'Plan cancelled')
+
+    if active_entries:
+        _recalculate_queue_positions()
+
+
 @transaction.atomic
 def cancel_rotation_plan(plan, actor='', reason=''):
     """
     Cancel a rotation plan and its associated queue entries.
 
-    Cancels pending worker tasks and active queue entries.
-    Package state is updated for any queue entries that were active.
+    All cancellations happen in one transaction:
+    - If any queue entry fails to cancel, everything rolls back.
+    - No partial cancellation is possible.
     """
     from operations.models import TaskStatus
 
@@ -275,14 +306,9 @@ def cancel_rotation_plan(plan, actor='', reason=''):
         status__in=[TaskStatus.PENDING, TaskStatus.IN_PROGRESS]
     ).update(status=TaskStatus.CANCELLED)
 
-    # Cancel active queue entries for this plan
-    active_entries = ThawQueueEntry.objects.filter(
-        rotation_plan=plan,
-        status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START]
-    )
-    for entry in active_entries:
-        remove_from_thaw_queue(entry, actor=actor,
-                             reason=reason or 'Plan cancelled')
+    # Cancel active queue entries — all-or-nothing within this transaction
+    _cancel_queue_entries_for_plan(plan, actor=actor,
+                                  reason=reason or 'Plan cancelled')
 
     from planning.audit import Audit
     Audit.plan_action(plan, 'PLAN_CANCELLED', actor=actor, reason=reason)
