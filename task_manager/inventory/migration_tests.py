@@ -13,9 +13,9 @@ from pathlib import Path
 from django.test import TestCase
 
 from inventory.migration_engine import (
-    DryRunEngine, LegacyDB, Status, Severity,
+    DryRunEngine, LegacyDB, Status, Severity, ReconciliationReport,
     map_categories, map_suppliers, map_products, map_batches, map_packages,
-    _map_storage_status, _generate_sku, make_batch_id,
+    _map_storage_status, _generate_sku, make_batch_id, file_hash,
 )
 
 
@@ -47,7 +47,7 @@ def _make_empty_db():
 
 
 def _make_minimal_db():
-    """Create a minimal database with one category, one supplier, one product, one package."""
+    """Create a minimal database with one category, one supplier, one product, one batch, one package."""
     return _create_test_db([
         ('stock_meat_category', ['ids', 'name_type'], [
             ('1', 'หมูสดใส่ถุง'),
@@ -141,7 +141,7 @@ class TestMultipleProducts(TestCase):
 # ============================================================
 
 class TestDuplicateSku(TestCase):
-    def test_duplicate_prefix_barcode(self):
+    def test_both_duplicates_are_warnings(self):
         db_path = _create_test_db([
             ('stock_meat_category', ['ids', 'name_type'], [('1', 'หมู')]),
             ('stock_meat_supply_meat', ['ids', 'name_place', 'locations'], []),
@@ -156,8 +156,11 @@ class TestDuplicateSku(TestCase):
             engine = DryRunEngine(db_path)
             engine.run()
             prods = engine.results['products']
-            statuses = [p.status for p in prods]
-            self.assertIn(Status.WARNING, statuses)
+            # Both should be WARNING since they share a SKU
+            for p in prods:
+                self.assertEqual(p.status, Status.WARNING,
+                    f'Product {p.legacy_id} should be WARNING, got {p.status}')
+            self.assertEqual(len(prods), 2)
         finally:
             os.unlink(db_path)
 
@@ -332,6 +335,8 @@ class TestDuplicateBarcode(TestCase):
             pkgs = engine.results['packages']
             statuses = [p.status for p in pkgs]
             self.assertIn(Status.SKIPPED, statuses)
+            # Both should be candidates (1 valid + 1 skipped)
+            self.assertEqual(len(pkgs), 2)
         finally:
             os.unlink(db_path)
 
@@ -451,11 +456,11 @@ class TestRepeatedDryRun(TestCase):
         try:
             engine1 = DryRunEngine(db_path)
             engine1.run()
-            result1 = {c.target_model: c.status for c in engine1.results['products']}
+            result1 = [(c.legacy_id, c.status) for c in engine1.results['products']]
 
             engine2 = DryRunEngine(db_path)
             engine2.run()
-            result2 = {c.target_model: c.status for c in engine2.results['products']}
+            result2 = [(c.legacy_id, c.status) for c in engine2.results['products']]
 
             self.assertEqual(result1, result2)
         finally:
@@ -468,8 +473,6 @@ class TestRepeatedDryRun(TestCase):
 
 class TestAlreadyMigratedDetection(TestCase):
     def test_already_migrated_lookup(self):
-        # This tests the concept — actual DB lookup happens during real migration
-        # For dry-run, we just verify the candidate carries legacy_source/legacy_id
         db_path = _make_minimal_db()
         try:
             engine = DryRunEngine(db_path)
@@ -553,7 +556,224 @@ class TestJsonExport(TestCase):
             data = json.loads(Path(out_path).read_text())
             self.assertIn('migration_batch', data)
             self.assertIn('summary', data)
+            self.assertIn('reconciliation', data)
+            # All minimal DB products are valid
             self.assertEqual(data['summary']['valid'], data['summary']['total'])
             os.unlink(out_path)
+        finally:
+            os.unlink(db_path)
+
+
+# ============================================================
+# TEST: Reconciliation invariant
+# ============================================================
+
+class TestReconciliation(TestCase):
+    def test_invariant_holds_minimal_db(self):
+        """source_count == valid + warning + invalid + skipped for each model."""
+        db_path = _make_minimal_db()
+        try:
+            engine = DryRunEngine(db_path)
+            engine.run()
+            for model_name, m in engine.reconciliation.models.items():
+                ok, computed = engine.reconciliation.check_invariant(model_name)
+                self.assertTrue(ok,
+                    f'{model_name}: source={m["source_count"]} ≠ '
+                    f'valid({m["valid"]})+warning({m["warning"]})+'
+                    f'invalid({m["invalid"]})+skipped({m["skipped"]})={computed}')
+        finally:
+            os.unlink(db_path)
+
+    def test_invariant_holds_empty_db(self):
+        db_path = _create_test_db([
+            ('stock_meat_category', ['ids', 'name_type'], []),
+            ('stock_meat_supply_meat', ['ids', 'name_place', 'locations'], []),
+            ('stock_meat_meat_parts', ['id', 'name', 'prefix_barcode', 'kcalories', 'protent', 'fat', 'category_id'], []),
+            ('stock_meat_product_info', ['id', 'name_id', 'type_product_id', 'import_from_id', 'lot_number', 'weight', 'cost', 'selling_price_per_kg', 'created_at'], []),
+            ('stock_meat_product_list', ['id', 'product_id', 'barcode', 'weight', 'selling_price', 'storage_status', 'thaw_queue_position', 'loyverse_sku', 'loyverse_item_id', 'loyverse_variant_id', 'loyverse_synced', 'mfg'], []),
+        ])
+        try:
+            engine = DryRunEngine(db_path)
+            engine.run()
+            for model_name, m in engine.reconciliation.models.items():
+                ok, computed = engine.reconciliation.check_invariant(model_name)
+                self.assertTrue(ok, f'{model_name} invariant violated')
+                self.assertEqual(m['source_count'], 0)
+                self.assertEqual(computed, 0)
+        finally:
+            os.unlink(db_path)
+
+    def test_invariant_with_skipped_product(self):
+        """Missing category → product SKIPPED → package that references it SKIPPED."""
+        db_path = _create_test_db([
+            ('stock_meat_category', ['ids', 'name_type'], []),
+            ('stock_meat_supply_meat', ['ids', 'name_place', 'locations'], []),
+            ('stock_meat_meat_parts', ['id', 'name', 'prefix_barcode', 'kcalories', 'protent', 'fat', 'category_id'], [
+                ('1', 'หมูบด', '8001', '185', '31.7', '6.2', '999'),  # bad category
+            ]),
+            ('stock_meat_product_info', ['id', 'name_id', 'type_product_id', 'import_from_id', 'lot_number', 'weight', 'cost', 'selling_price_per_kg', 'created_at'], [
+                ('1', '1', '1', '1', '1', '0.0', '82.0', '97.0', '2024-01-15'),
+            ]),
+            ('stock_meat_product_list', ['id', 'product_id', 'barcode', 'weight', 'selling_price', 'storage_status', 'thaw_queue_position', 'loyverse_sku', 'loyverse_item_id', 'loyverse_variant_id', 'loyverse_synced', 'mfg'], [
+                ('1', '1', '1-1-8001-0001', '850.0', '82.0', 'frozen', '0', '', '', '', '0', '2024-01-15'),
+            ]),
+        ])
+        try:
+            engine = DryRunEngine(db_path)
+            engine.run()
+            # All models should satisfy the invariant
+            for model_name in ['categories', 'suppliers', 'products', 'batches', 'packages']:
+                ok, computed = engine.reconciliation.check_invariant(model_name)
+                self.assertTrue(ok, f'{model_name} invariant violated')
+            # Product is skipped, so package should also be skipped
+            self.assertEqual(engine.results['products'][0].status, Status.SKIPPED)
+            self.assertEqual(engine.results['packages'][0].status, Status.SKIPPED)
+        finally:
+            os.unlink(db_path)
+
+
+# ============================================================
+# TEST: Issue count is not record count
+# ============================================================
+
+class TestIssueCount(TestCase):
+    def test_multiple_issues_one_record(self):
+        """One record with multiple issues should still count as one candidate."""
+        db_path = _create_test_db([
+            ('stock_meat_category', ['ids', 'name_type'], [('1', 'หมู')]),
+            ('stock_meat_supply_meat', ['ids', 'name_place', 'locations'], []),
+            ('stock_meat_meat_parts', ['id', 'name', 'prefix_barcode', 'kcalories', 'protent', 'fat', 'category_id'], [
+                ('1', 'หมูบด', '8001', '185', '31.7', '6.2', '1'),
+            ]),
+            ('stock_meat_product_info', ['id', 'name_id', 'type_product_id', 'import_from_id', 'lot_number', 'weight', 'cost', 'selling_price_per_kg', 'created_at'], [
+                ('1', '1', '1', '1', '1', '0.0', '82.0', '97.0', '2024-01-15'),
+            ]),
+            ('stock_meat_product_list', ['id', 'product_id', 'barcode', 'weight', 'selling_price', 'storage_status', 'thaw_queue_position', 'loyverse_sku', 'loyverse_item_id', 'loyverse_variant_id', 'loyverse_synced', 'mfg'], [
+                # depleted + thaw_queue=3 = conflicting state + negative price
+                ('1', '1', '1-1-8001-0001', '850.0', '-10', 'depleted', '3', '', '', '', '0', '2024-01-15'),
+            ]),
+        ])
+        try:
+            engine = DryRunEngine(db_path)
+            engine.run()
+            pkgs = engine.results['packages']
+            self.assertEqual(len(pkgs), 1)
+            # Should have 2 issues (conflicting state + negative price) but only 1 candidate
+            self.assertGreaterEqual(len(pkgs[0].issues), 2)
+            # The reconciliation should still hold
+            ok, _ = engine.reconciliation.check_invariant('packages')
+            self.assertTrue(ok, 'packages invariant violated')
+        finally:
+            os.unlink(db_path)
+
+
+# ============================================================
+# TEST: Product resolution through product_info chain
+# ============================================================
+
+class TestProductResolution(TestCase):
+    def test_correct_product_via_product_info_chain(self):
+        """Package should resolve to the correct product via product_info → meat_parts chain."""
+        db_path = _create_test_db([
+            ('stock_meat_category', ['ids', 'name_type'], [('1', 'หมู'), ('2', 'ไก่')]),
+            ('stock_meat_supply_meat', ['ids', 'name_place', 'locations'], []),
+            ('stock_meat_meat_parts', ['id', 'name', 'prefix_barcode', 'kcalories', 'protent', 'fat', 'category_id'], [
+                ('1', 'หมูบด', '8001', '185', '31.7', '6.2', '1'),
+                ('2', 'อกไก่', '1003', '172', '21', '3', '2'),
+            ]),
+            ('stock_meat_product_info', ['id', 'name_id', 'type_product_id', 'import_from_id', 'lot_number', 'weight', 'cost', 'selling_price_per_kg', 'created_at'], [
+                # product_info 1 → meat_parts 2 (อกไก่)
+                ('1', '2', '1', '1', '1', '0.0', '82.0', '97.0', '2024-01-15'),
+            ]),
+            ('stock_meat_product_list', ['id', 'product_id', 'barcode', 'weight', 'selling_price', 'storage_status', 'thaw_queue_position', 'loyverse_sku', 'loyverse_item_id', 'loyverse_variant_id', 'loyverse_synced', 'mfg'], [
+                # package references product_info 1 (which maps to meat_parts 2, not 1!)
+                ('1', '1', '1-1-1003-0001', '850.0', '82.0', 'frozen', '0', '', '', '', '0', '2024-01-15'),
+            ]),
+        ])
+        try:
+            engine = DryRunEngine(db_path)
+            engine.run()
+            pkgs = engine.results['packages']
+            self.assertEqual(len(pkgs), 1)
+            self.assertEqual(pkgs[0].status, Status.VALID)
+            # Should resolve to อกไก่ (meat_parts 2), not หมูบด (meat_parts 1)
+            self.assertEqual(pkgs[0].data['product_sku'], 'MP-1003')
+            self.assertEqual(str(pkgs[0].data['meat_parts_id']), '2')
+        finally:
+            os.unlink(db_path)
+
+    def test_skipped_product_info(self):
+        """Package referencing product_info with invalid meat_parts should be SKIPPED."""
+        db_path = _create_test_db([
+            ('stock_meat_category', ['ids', 'name_type'], [('1', 'หมู')]),
+            ('stock_meat_supply_meat', ['ids', 'name_place', 'locations'], []),
+            ('stock_meat_meat_parts', ['id', 'name', 'prefix_barcode', 'kcalories', 'protent', 'fat', 'category_id'], [
+                ('1', 'หมูบด', '8001', '185', '31.7', '6.2', '1'),
+            ]),
+            ('stock_meat_product_info', ['id', 'name_id', 'type_product_id', 'import_from_id', 'lot_number', 'weight', 'cost', 'selling_price_per_kg', 'created_at'], [
+                # product_info 1 → meat_parts 999 (doesn't exist)
+                ('1', '999', '1', '1', '1', '0.0', '82.0', '97.0', '2024-01-15'),
+            ]),
+            ('stock_meat_product_list', ['id', 'product_id', 'barcode', 'weight', 'selling_price', 'storage_status', 'thaw_queue_position', 'loyverse_sku', 'loyverse_item_id', 'loyverse_variant_id', 'loyverse_synced', 'mfg'], [
+                ('1', '1', '1-1-8001-0001', '850.0', '82.0', 'frozen', '0', '', '', '', '0', '2024-01-15'),
+            ]),
+        ])
+        try:
+            engine = DryRunEngine(db_path)
+            engine.run()
+            pkgs = engine.results['packages']
+            self.assertEqual(len(pkgs), 1)
+            self.assertEqual(pkgs[0].status, Status.SKIPPED)
+        finally:
+            os.unlink(db_path)
+
+    def test_high_product_info_ids_resolve(self):
+        """Product_info IDs > meat_parts max ID should resolve correctly through the chain."""
+        db_path = _create_test_db([
+            ('stock_meat_category', ['ids', 'name_type'], [('1', 'หมู')]),
+            ('stock_meat_supply_meat', ['ids', 'name_place', 'locations'], []),
+            ('stock_meat_meat_parts', ['id', 'name', 'prefix_barcode', 'kcalories', 'protent', 'fat', 'category_id'], [
+                ('1', 'หมูบด', '8001', '185', '31.7', '6.2', '1'),
+                ('5', 'สันนอก', '8005', '200', '25', '10', '1'),
+            ]),
+            ('stock_meat_product_info', ['id', 'name_id', 'type_product_id', 'import_from_id', 'lot_number', 'weight', 'cost', 'selling_price_per_kg', 'created_at'], [
+                # product_info 32 → meat_parts 1 (high ID, should still resolve)
+                ('32', '1', '1', '1', '1', '0.0', '82.0', '97.0', '2024-01-15'),
+                ('33', '5', '1', '1', '1', '0.0', '100.0', '125.0', '2024-01-15'),
+            ]),
+            ('stock_meat_product_list', ['id', 'product_id', 'barcode', 'weight', 'selling_price', 'storage_status', 'thaw_queue_position', 'loyverse_sku', 'loyverse_item_id', 'loyverse_variant_id', 'loyverse_synced', 'mfg'], [
+                ('1', '32', '1-1-8001-0001', '850.0', '82.0', 'frozen', '0', '', '', '', '0', '2024-01-15'),
+                ('2', '33', '1-1-8005-0002', '900.0', '100.0', 'frozen', '0', '', '', '', '0', '2024-01-15'),
+            ]),
+        ])
+        try:
+            engine = DryRunEngine(db_path)
+            engine.run()
+            pkgs = engine.results['packages']
+            self.assertEqual(len(pkgs), 2)
+            for p in pkgs:
+                self.assertEqual(p.status, Status.VALID)
+            self.assertEqual(pkgs[0].data['product_sku'], 'MP-8001')
+            self.assertEqual(str(pkgs[0].data['meat_parts_id']), '1')
+            self.assertEqual(pkgs[1].data['product_sku'], 'MP-8005')
+            self.assertEqual(str(pkgs[1].data['meat_parts_id']), '5')
+        finally:
+            os.unlink(db_path)
+
+
+# ============================================================
+# TEST: File hash (read-only verification)
+# ============================================================
+
+class TestFileHash(TestCase):
+    def test_file_unchanged_after_dry_run(self):
+        db_path = _make_minimal_db()
+        try:
+            hash_before = file_hash(db_path)
+            engine = DryRunEngine(db_path)
+            engine.run()
+            hash_after = file_hash(db_path)
+            self.assertEqual(hash_before, hash_after,
+                'Legacy database was modified during dry-run!')
         finally:
             os.unlink(db_path)

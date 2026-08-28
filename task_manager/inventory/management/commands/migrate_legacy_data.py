@@ -9,12 +9,11 @@ Usage:
     python manage.py migrate_legacy_data --dry-run --legacy-db path/to/legacy.db
     python manage.py migrate_legacy_data --dry-run --json-output report.json
 """
-import os
 from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
 
-from inventory.migration_engine import DryRunEngine
+from inventory.migration_engine import DryRunEngine, file_hash
 
 
 class Command(BaseCommand):
@@ -52,9 +51,11 @@ class Command(BaseCommand):
         if not legacy_path.exists():
             raise CommandError(f"Legacy database not found: {legacy_path}")
 
-        # Verify it's read-only safe (don't open for write)
+        # File hash before dry-run (read-only verification)
+        hash_before = file_hash(legacy_path)
         self.stdout.write(f"\nSource database: {legacy_path}")
         self.stdout.write(f"File size: {legacy_path.stat().st_size:,} bytes")
+        self.stdout.write(f"SHA-256 (before): {hash_before[:16]}...")
         self.stdout.write(f"Read-only: Yes (SQLite URI mode=ro)\n")
 
         # ── RUN DRY-RUN ──
@@ -63,6 +64,18 @@ class Command(BaseCommand):
 
         # ── PRINT REPORT ──
         engine.print_report()
+
+        # ── VERIFY READ-ONLY (file hash after) ──
+        hash_after = file_hash(legacy_path)
+        if hash_before == hash_after:
+            self.stdout.write(self.style.SUCCESS(
+                f"🔒 READ-ONLY VERIFIED: Legacy database unchanged (SHA-256 match)"
+            ))
+        else:
+            self.stdout.write(self.style.ERROR(
+                f"❌ WARNING: Legacy database was modified during dry-run! "
+                f"Before={hash_before[:16]}... After={hash_after[:16]}..."
+            ))
 
         # ── JSON OUTPUT ──
         json_path = options.get('json_output')

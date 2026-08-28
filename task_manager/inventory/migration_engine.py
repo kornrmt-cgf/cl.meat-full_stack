@@ -6,6 +6,7 @@ STRICTLY READ-ONLY.  Never writes to any database.
 Transforms legacy data into migration candidates, validates them,
 and generates deterministic reports.
 """
+import hashlib
 import json
 import sqlite3
 from datetime import datetime, timezone
@@ -41,6 +42,19 @@ class Status:
 def make_batch_id():
     """Deterministic batch ID based on execution time."""
     return f"MIGRATION-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+
+
+# ============================================================
+# READ-ONLY VERIFICATION
+# ============================================================
+
+def file_hash(path):
+    """SHA-256 hash of a file, for read-only verification."""
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(8192), b''):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 # ============================================================
@@ -90,6 +104,18 @@ class LegacyDB:
         ]
         return {t: self.table_count(t) for t in tables}
 
+    def build_pi_to_mp_map(self):
+        """Build product_info.id → meat_parts.id mapping via product_info.name_id."""
+        rows = self.fetch_all('stock_meat_product_info')
+        result = {}
+        for row in rows:
+            pi_id = row['id']
+            name_id = row.get('name_id')
+            if pi_id is not None and name_id is not None:
+                result[pi_id] = name_id
+                result[str(pi_id)] = name_id
+        return result
+
 
 # ============================================================
 # VALIDATION ISSUE
@@ -130,8 +156,10 @@ class Candidate:
 
     def add_issue(self, severity, message, field=None):
         self.issues.append(Issue(severity, self.legacy_source, self.legacy_id, message, field))
+        # Escalation: ERROR → INVALID (unless already SKIPPED)
         if severity == Severity.ERROR and self.status not in (Status.INVALID, Status.SKIPPED):
             self.status = Status.INVALID
+        # Escalation: WARNING → WARNING (only from VALID)
         elif severity == Severity.WARNING and self.status == Status.VALID:
             self.status = Status.WARNING
 
@@ -145,6 +173,57 @@ class Candidate:
                      for k, v in self.data.items()},
             'issues': [i.to_dict() for i in self.issues],
         }
+
+
+# ============================================================
+# RECONCILIATION INVARIANT
+# ============================================================
+
+class ReconciliationReport:
+    """Tracks source records vs candidates for each model."""
+
+    def __init__(self):
+        self.models = {}  # model_name → {source_count, candidates: []}
+
+    def register(self, model_name, source_count, candidates):
+        self.models[model_name] = {
+            'source_count': source_count,
+            'candidates': candidates,
+            'valid': sum(1 for c in candidates if c.status == Status.VALID),
+            'warning': sum(1 for c in candidates if c.status == Status.WARNING),
+            'invalid': sum(1 for c in candidates if c.status == Status.INVALID),
+            'skipped': sum(1 for c in candidates if c.status == Status.SKIPPED),
+            'issue_count': sum(len(c.issues) for c in candidates),
+        }
+
+    def check_invariant(self, model_name):
+        """Verify source_count == valid + warning + invalid + skipped."""
+        m = self.models[model_name]
+        computed = m['valid'] + m['warning'] + m['invalid'] + m['skipped']
+        return m['source_count'] == computed, computed
+
+    def print_reconciliation(self):
+        print()
+        print("=" * 60)
+        print("RECONCILIATION REPORT")
+        print("=" * 60)
+        all_ok = True
+        for model_name, m in self.models.items():
+            ok, computed = self.check_invariant(model_name)
+            icon = "✅" if ok else "❌"
+            status_line = f"{m['valid']}V + {m['warning']}W + {m['invalid']}I + {m['skipped']}S = {computed}"
+            if not ok:
+                all_ok = False
+                status_line += f" ≠ SOURCE={m['source_count']}"
+            print(f"  {icon} {model_name:20s} source={m['source_count']:3d}  {status_line}")
+            if m['issue_count'] > 0:
+                print(f"     issues: {m['issue_count']}")
+        print()
+        if all_ok:
+            print("  ✅ All invariants hold: source == valid + warning + invalid + skipped")
+        else:
+            print("  ❌ INVARIANT VIOLATION DETECTED — see above")
+        print()
 
 
 # ============================================================
@@ -237,13 +316,28 @@ def _generate_sku(prefix_barcode):
 
 
 def map_products(rows, category_candidates, batch_id):
-    candidates = []
-    seen_skus = {}
-    category_map = {}  # legacy category id → candidate
+    """Two-pass product mapping for deterministic duplicate SKU detection."""
+    category_map = {}
     for cc in category_candidates:
         if cc.status != Status.INVALID and 'code' in cc.data:
             category_map[cc.legacy_id] = cc
-            category_map[str(cc.legacy_id)] = cc  # handle string keys from SQLite
+            category_map[str(cc.legacy_id)] = cc
+
+    # ── PASS 1: Collect all SKU assignments ──
+    sku_to_legacy_ids = {}  # sku → [legacy_id, ...]
+    row_data = {}  # legacy_id → row dict
+    for row in rows:
+        legacy_id = row['id']
+        prefix_barcode = (row.get('prefix_barcode') or '').strip()
+        sku = _generate_sku(prefix_barcode)
+        if not sku:
+            sku = f"MP-{legacy_id:04d}"
+        row_data[legacy_id] = row
+        sku_to_legacy_ids.setdefault(sku, []).append(legacy_id)
+
+    # ── PASS 2: Generate candidates with correct status ──
+    candidates = []
+    duplicate_skus = {sku for sku, ids in sku_to_legacy_ids.items() if len(ids) > 1}
 
     for row in rows:
         name = (row.get('name') or '').strip()
@@ -251,7 +345,7 @@ def map_products(rows, category_candidates, batch_id):
         category_id = row.get('category_id')
         prefix_barcode = (row.get('prefix_barcode') or '').strip()
         kcalories = row.get('kcalories') or 0
-        protein = row.get('protent') or 0  # legacy typo
+        protein = row.get('protent') or 0
         fat = row.get('fat') or 0
 
         if not name:
@@ -271,13 +365,6 @@ def map_products(rows, category_candidates, batch_id):
         if not sku:
             sku = f"MP-{legacy_id:04d}"
 
-        if sku in seen_skus:
-            c = Candidate('Product', 'stock_meat_meat_parts', legacy_id, {'name': name, 'sku': sku}, Status.WARNING)
-            c.add_issue(Severity.WARNING, f'Duplicate SKU "{sku}" (same as legacy #{seen_skus[sku]})', 'sku')
-            candidates.append(c)
-            continue
-
-        seen_skus[sku] = legacy_id
         data = {
             'sku': sku,
             'name': name,
@@ -291,7 +378,22 @@ def map_products(rows, category_candidates, batch_id):
             'unit': 'KG',
             'active': True,
         }
-        c = Candidate('Product', 'stock_meat_meat_parts', legacy_id, data)
+
+        status = Status.VALID
+        c = Candidate('Product', 'stock_meat_meat_parts', legacy_id, data, status)
+
+        if sku in duplicate_skus:
+            # Find the first ID for this SKU (deterministic ordering)
+            first_id = min(sku_to_legacy_ids[sku])
+            if legacy_id == first_id:
+                c.add_issue(Severity.WARNING,
+                           f'Duplicate SKU "{sku}" shared by meat_parts IDs {sorted(sku_to_legacy_ids[sku])}',
+                           'sku')
+            else:
+                c.add_issue(Severity.WARNING,
+                           f'Duplicate SKU "{sku}" (first occurrence is legacy #{first_id})',
+                           'sku')
+
         candidates.append(c)
 
     return candidates
@@ -326,7 +428,7 @@ def map_batches(rows, product_candidates, supplier_candidates, batch_id):
         weight = row.get('weight') or 0
         created_at = row.get('created_at') or ''
 
-        # Resolve product
+        # Resolve product via meat_parts_id
         if meat_parts_id is None or meat_parts_id not in product_map:
             c = Candidate('Batch', 'stock_meat_product_info', legacy_id, {}, Status.SKIPPED)
             ref = 'missing' if meat_parts_id is None else f'invalid (id={meat_parts_id})'
@@ -342,8 +444,6 @@ def map_batches(rows, product_candidates, supplier_candidates, batch_id):
         if supplier_id and supplier_id in supplier_map:
             supplier_name = supplier_map[supplier_id].data['name']
             supplier_legacy_id = supplier_id
-        elif supplier_id:
-            pass  # supplier not found — will issue warning
 
         # Generate batch number
         date_str = created_at[:10].replace('-', '') if created_at else '00000000'
@@ -356,10 +456,6 @@ def map_batches(rows, product_candidates, supplier_candidates, batch_id):
         except (TypeError, ValueError):
             lot_int = 1
         batch_number = f"B-{date_str}-{supplier_int:02d}-{lot_int:02d}"
-
-        # Check duplicate batch number
-        if batch_number in seen_batch_numbers:
-            pass  # Intentional — same supplier+lot+date = same batch
 
         # Report weight=0.0
         weight_issue = None
@@ -431,26 +527,31 @@ def _map_storage_status(row):
 # MAPPING: PACKAGE (from Product_list)
 # ============================================================
 
-def map_packages(rows, product_candidates, batch_candidates, batch_id):
-    candidates = []
-    product_map = {}  # meat_parts id → product candidate
-    seen_barcodes = {}
-    seen_loyverse_skus = {}
+def map_packages(rows, product_candidates, batch_candidates, pi_to_mp_map, batch_id):
+    """
+    Map product_list → Package candidates.
 
+    Resolves product references via: product_list.product_id → product_info.id → product_info.name_id → meat_parts.id
+    Uses pi_to_mp_map to bridge product_info IDs to meat_parts IDs.
+    """
+    candidates = []
+    # Build meat_parts id → product candidate map
+    mp_product_map = {}
     for pc in product_candidates:
         if pc.status not in (Status.INVALID, Status.SKIPPED) and 'sku' in pc.data:
-            product_map[pc.legacy_id] = pc
-            product_map[str(pc.legacy_id)] = pc
+            mp_product_map[pc.legacy_id] = pc
+            mp_product_map[str(pc.legacy_id)] = pc
 
-    # Build batch lookup: (product_legacy_id, lot?) — simplified
-    # In practice, we need to resolve product_info → product + batch
-    # For now, group batch candidates by product_legacy_id
-    batch_by_product = {}
+    # Build batch lookup by product_info legacy_id
+    batch_by_pi_id = {}
     for bc in batch_candidates:
         if bc.status != Status.INVALID:
-            prod_id = bc.data.get('product_legacy_id')
-            if prod_id not in batch_by_product:
-                batch_by_product[prod_id] = bc
+            # Batch's legacy_id is the product_info.id
+            batch_by_pi_id[bc.legacy_id] = bc
+            batch_by_pi_id[str(bc.legacy_id)] = bc
+
+    seen_barcodes = {}
+    seen_loyverse_skus = {}
 
     for row in rows:
         legacy_id = row['id']
@@ -478,19 +579,37 @@ def map_packages(rows, product_candidates, batch_candidates, batch_id):
 
         if barcode in seen_barcodes:
             c = Candidate('Package', 'stock_meat_product_list', legacy_id, {'barcode': barcode}, Status.SKIPPED)
-            c.add_issue(Severity.ERROR, f'Duplicate barcode (same as legacy #{seen_barcodes[barcode]})', 'barcode')
+            c.add_issue(Severity.ERROR, f'Duplicate barcode (first at legacy #{seen_barcodes[barcode]})', 'barcode')
             candidates.append(c)
             continue
 
-        # Resolve product
+        # ── PRODUCT RESOLUTION (FIXED) ──
+        # product_list.product_id → product_info.id → product_info.name_id → meat_parts.id → product candidate
+        meat_parts_id = None
+        if product_info_id is not None:
+            meat_parts_id = pi_to_mp_map.get(product_info_id) or pi_to_mp_map.get(str(product_info_id))
+
         product_candidate = None
-        if product_info_id and product_info_id in product_map:
-            product_candidate = product_map[product_info_id]
+        if meat_parts_id is not None:
+            product_candidate = mp_product_map.get(meat_parts_id) or mp_product_map.get(str(meat_parts_id))
 
         if not product_candidate:
             c = Candidate('Package', 'stock_meat_product_list', legacy_id, {'barcode': barcode}, Status.SKIPPED)
-            ref = 'missing' if product_info_id is None else f'invalid (id={product_info_id})'
-            c.add_issue(Severity.ERROR, f'Product reference {ref}', 'product_id')
+            if product_info_id is None:
+                c.add_issue(Severity.ERROR, 'Product reference missing (product_id=NULL)', 'product_id')
+            elif meat_parts_id is None:
+                c.add_issue(Severity.ERROR, f'product_info #{product_info_id} has no valid meat_parts reference', 'name_id')
+            else:
+                c.add_issue(Severity.ERROR, f'Product reference invalid (product_info #{product_info_id} → meat_parts #{meat_parts_id})', 'product_id')
+            candidates.append(c)
+            continue
+
+        # Skip if product candidate is itself skipped (e.g., no category)
+        if product_candidate.status == Status.SKIPPED:
+            c = Candidate('Package', 'stock_meat_product_list', legacy_id, {'barcode': barcode}, Status.SKIPPED)
+            c.add_issue(Severity.ERROR,
+                       f'Product candidate skipped: product_info #{product_info_id} → meat_parts #{meat_parts_id}',
+                       'product_id')
             candidates.append(c)
             continue
 
@@ -507,9 +626,6 @@ def map_packages(rows, product_candidates, batch_candidates, batch_id):
             candidates.append(c)
             continue
 
-        if weight_kg > Decimal('100'):
-            pass  # unusual but not necessarily wrong
-
         # Price conversion
         try:
             price = Decimal(str(selling_price))
@@ -519,12 +635,6 @@ def map_packages(rows, product_candidates, batch_candidates, batch_id):
         # State mapping
         canonical_state, state_note = _map_storage_status(row)
 
-        # Detect conflicting states
-        state_issues = []
-        if storage_status_raw == 'depleted' and thaw_queue_position > 0:
-            state_issues.append(Severity.WARNING)
-            state_note = f'depleted but thaw_queue_position={thaw_queue_position} (conflicting)'
-
         if canonical_state is None:
             c = Candidate('Package', 'stock_meat_product_list', legacy_id, {'barcode': barcode}, Status.SKIPPED)
             c.add_issue(Severity.ERROR, f'Unknown storage_status: "{storage_status_raw}"', 'storage_status')
@@ -533,21 +643,18 @@ def map_packages(rows, product_candidates, batch_candidates, batch_id):
 
         # Batch resolution
         batch_number = None
-        if product_info_id:
-            # Find the batch candidate for this product_info
-            for bc in batch_candidates:
-                if bc.legacy_id == product_info_id and bc.status != Status.INVALID:
-                    batch_number = bc.data.get('batch_number')
-                    break
+        if product_info_id is not None:
+            bc = batch_by_pi_id.get(product_info_id) or batch_by_pi_id.get(str(product_info_id))
+            if bc and bc.status != Status.INVALID:
+                batch_number = bc.data.get('batch_number')
 
         loyverse_sku_str = str(loyverse_sku) if loyverse_sku else None
-        if loyverse_sku_str and loyverse_sku_str in seen_loyverse_skus:
-            pass  # report as warning
 
         data = {
             'barcode': barcode,
             'product_sku': product_candidate.data['sku'],
             'product_legacy_id': product_info_id,
+            'meat_parts_id': meat_parts_id,
             'batch_number': batch_number or f'B-UNKNOWN-{product_info_id}',
             'weight_kg': weight_kg,
             'selling_price': price,
@@ -575,7 +682,7 @@ def map_packages(rows, product_candidates, batch_candidates, batch_id):
         # Loyverse duplicate
         if loyverse_sku_str and loyverse_sku_str in seen_loyverse_skus:
             c.add_issue(Severity.WARNING,
-                       f'Duplicate loyverse_sku (same as legacy #{seen_loyverse_skus[loyverse_sku_str]})',
+                       f'Duplicate loyverse_sku (first at legacy #{seen_loyverse_skus[loyverse_sku_str]})',
                        'loyverse_sku')
 
         candidates.append(c)
@@ -598,6 +705,7 @@ class DryRunEngine:
         self.batch_id = make_batch_id()
         self.db = LegacyDB(legacy_db_path)
         self.results = {}
+        self.reconciliation = ReconciliationReport()
 
     def run(self):
         self.db.open()
@@ -606,6 +714,9 @@ class DryRunEngine:
             self.results['source_counts'] = source_counts
             self.results['batch_id'] = self.batch_id
             self.results['source'] = str(self.legacy_db_path)
+
+            # Build product_info → meat_parts mapping
+            pi_to_mp_map = self.db.build_pi_to_mp_map()
 
             # Extract
             categories_raw = self.db.fetch_all('stock_meat_category')
@@ -619,13 +730,29 @@ class DryRunEngine:
             sup_candidates = map_suppliers(suppliers_raw, self.batch_id)
             prod_candidates = map_products(products_raw, cat_candidates, self.batch_id)
             batch_candidates = map_batches(batches_raw, prod_candidates, sup_candidates, self.batch_id)
-            pkg_candidates = map_packages(packages_raw, prod_candidates, batch_candidates, self.batch_id)
+            pkg_candidates = map_packages(packages_raw, prod_candidates, batch_candidates,
+                                          pi_to_mp_map, self.batch_id)
 
             self.results['categories'] = cat_candidates
             self.results['suppliers'] = sup_candidates
             self.results['products'] = prod_candidates
             self.results['batches'] = batch_candidates
             self.results['packages'] = pkg_candidates
+
+            # ── RECONCILIATION ──
+            source_keys = {
+                'categories': 'stock_meat_category',
+                'suppliers': 'stock_meat_supply_meat',
+                'products': 'stock_meat_meat_parts',
+                'batches': 'stock_meat_product_info',
+                'packages': 'stock_meat_product_list',
+            }
+            for model_name, table_key in source_keys.items():
+                self.reconciliation.register(
+                    model_name,
+                    source_counts.get(table_key, 0),
+                    self.results[model_name],
+                )
 
             # Summary
             all_candidates = cat_candidates + sup_candidates + prod_candidates + batch_candidates + pkg_candidates
@@ -700,6 +827,9 @@ class DryRunEngine:
                 print(f"  ⚠️  [{i.source} #{i.legacy_id}] {i.message}")
             print()
 
+        # Reconciliation
+        self.reconciliation.print_reconciliation()
+
         print("=" * 60)
         print("DRY-RUN COMPLETE — NO DATA WAS WRITTEN")
         print("=" * 60)
@@ -717,5 +847,16 @@ class DryRunEngine:
             'batches': [c.to_dict() for c in self.results.get('batches', [])],
             'packages': [c.to_dict() for c in self.results.get('packages', [])],
             'issues': [i.to_dict() for i in self.results.get('issues', [])],
+            'reconciliation': {
+                name: {
+                    'source_count': m['source_count'],
+                    'valid': m['valid'],
+                    'warning': m['warning'],
+                    'invalid': m['invalid'],
+                    'skipped': m['skipped'],
+                    'issue_count': m['issue_count'],
+                }
+                for name, m in self.reconciliation.models.items()
+            },
         }
         Path(path).write_text(json.dumps(output, indent=2, default=str))
