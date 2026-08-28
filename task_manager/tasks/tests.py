@@ -968,8 +968,8 @@ class TimezoneTest(TestCase):
         )
 
         # สร้าง task ที่ไม่มี task_date (fallback ไป deadline)
-        from pytz import timezone as tz
-        bangkok = tz("Asia/Bangkok")
+        from zoneinfo import ZoneInfo
+        bangkok = ZoneInfo("Asia/Bangkok")
         deadline_bangkok = timezone.now().astimezone(bangkok).replace(hour=12, minute=0, second=0, microsecond=0)
         task_deadline = Task.objects.create(
             title="งาน deadline วันนี้",

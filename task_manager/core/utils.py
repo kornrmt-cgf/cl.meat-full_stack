@@ -15,11 +15,8 @@ def today_local():
     Returns:
         date object ใน timezone Bangkok
     """
-    from django.utils import timezone
-    from pytz import timezone as tz
-
-    bangkok = tz("Asia/Bangkok")
-    return timezone.now().astimezone(bangkok).date()
+    from django.utils import timezone as tz_utils
+    return tz_utils.localtime(tz_utils.now()).date()
 
 
 def now_local():
@@ -29,8 +26,5 @@ def now_local():
     Returns:
         datetime object ใน timezone Bangkok
     """
-    from django.utils import timezone
-    from pytz import timezone as tz
-
-    bangkok = tz("Asia/Bangkok")
-    return timezone.now().astimezone(bangkok)
+    from django.utils import timezone as tz_utils
+    return tz_utils.localtime(tz_utils.now())

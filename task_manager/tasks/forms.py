@@ -151,13 +151,13 @@ class TaskCreateForm(forms.ModelForm):
 
     def clean(self):
         """ตรวจสอบความถูกต้องของข้อมูลเวลา + รวม date + time เป็น datetime"""
-        from pytz import timezone as tz
         cleaned = super().clean()
         task_date = cleaned.get("task_date")
         prepare_time = cleaned.get("prepare_time")
         start_time = cleaned.get("start_time")
         deadline_time = cleaned.get("deadline_time")
-        bangkok = tz("Asia/Bangkok")
+        from zoneinfo import ZoneInfo
+        bangkok = ZoneInfo("Asia/Bangkok")
 
         # รวม task_date + time → timezone-aware datetime
         if task_date and prepare_time:
