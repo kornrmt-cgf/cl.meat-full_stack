@@ -148,11 +148,17 @@ def add_to_thaw_queue(package, rotation_plan, actor=''):
     """
     Add a package to the thaw queue.
 
-    Both transitions (FROZEN → READY_FOR_THAW → THAW_QUEUED) must succeed.
+    Preconditions checked BEFORE any state change:
+    1. rotation_plan exists
+    2. package is FROZEN
+    3. not already in queue
+    4. thaw capacity not exceeded (interval overlap check)
+
+    Then both transitions (FROZEN → READY_FOR_THAW → THAW_QUEUED) must succeed.
     If either fails, the entire operation rolls back — no partial queue record.
 
     Raises:
-        ValueError: If preconditions are not met
+        ValueError: If preconditions are not met (including capacity exceeded)
         InvalidTransitionError: If state transition is not allowed
         TransitionValidationError: If transition validation fails (no plan, etc.)
     """
@@ -169,6 +175,18 @@ def add_to_thaw_queue(package, rotation_plan, actor=''):
         status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START, QueueStatus.STARTED]
     ).exists():
         raise ValueError("Already in thaw queue")
+
+    # ── CAPACITY GATE (interval overlap check) ──
+    # Check before any state transitions — if capacity is exceeded, fail early.
+    new_start = rotation_plan.planned_thaw_start_at
+    new_end = rotation_plan.target_ready_at
+    overlaps = check_thaw_interval_overlap(new_start, new_end, exclude_package=package)
+    profile = rotation_plan.thaw_profile
+    if len(overlaps) >= profile.thaw_capacity:
+        raise ValueError(
+            f"Thaw capacity exceeded: {len(overlaps)}/{profile.thaw_capacity} "
+            f"slots occupied during [{new_start} — {new_end}]"
+        )
 
     # Transition FROZEN → READY_FOR_THAW
     # Never skip — if this fails, the entire operation must fail.

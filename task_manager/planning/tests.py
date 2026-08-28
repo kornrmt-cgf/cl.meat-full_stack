@@ -356,6 +356,8 @@ class TestQueueOrdering(PlanningTestBase):
 
     def test_positions_are_sequential(self):
         """Queue positions should be sequential starting from 1."""
+        self.thaw_profile.thaw_capacity = 10
+        self.thaw_profile.save()
         packages = []
         for i in range(5):
             pkg = self._create_package(state=PackageState.FROZEN, barcode=f'Q-{i}')
@@ -368,6 +370,8 @@ class TestQueueOrdering(PlanningTestBase):
 
     def test_gap_in_positions_gets_fixed(self):
         """After deletion, gaps in positions should be repaired."""
+        self.thaw_profile.thaw_capacity = 5
+        self.thaw_profile.save()
         pkgs = []
         for i in range(3):
             pkg = self._create_package(state=PackageState.FROZEN, barcode=f'G-{i}')
@@ -811,3 +815,319 @@ class TestCancelRotationPlan(PlanningTestBase):
 # ============================================================
 
 from planning.services import cancel_rotation_plan
+
+
+# ============================================================
+# TEST 15: Capacity gate integration (real business flow)
+# ============================================================
+
+class TestCapacityGateIntegration(PlanningTestBase):
+    """
+    Integration tests proving the capacity gate in add_to_thaw_queue()
+    rejects over-capacity schedules through the REAL scheduling path.
+    """
+
+    def _fill_capacity(self, count, thaw_start, target_ready, offset=0):
+        """Fill capacity with `count` packages using the real flow."""
+        packages = []
+        for i in range(count):
+            pkg = self._create_package(state=PackageState.FROZEN, barcode=f'CAP-{offset + i}')
+            plan = RotationPlan.objects.create(
+                package=pkg, target_ready_at=target_ready,
+                planned_thaw_start_at=thaw_start,
+                planned_thaw_queue_at=thaw_start - timedelta(minutes=30),
+                planned_freeze_start_at=thaw_start - timedelta(hours=8),
+                planned_freeze_end_at=thaw_start - timedelta(minutes=15),
+                freeze_profile=self.freeze_profile,
+                thaw_profile=self.thaw_profile,
+                freeze_duration=timedelta(hours=8),
+                thaw_duration=timedelta(hours=12),
+                status=PlanStatus.PLANNED,
+            )
+            add_to_thaw_queue(pkg, rotation_plan=plan, actor='test')
+            packages.append(pkg)
+        return packages
+
+    # Case 1: complete overlap
+    def test_complete_overlap_rejects(self):
+        """New interval fully inside existing interval → rejected when at capacity."""
+        self.thaw_profile.thaw_capacity = 2
+        self.thaw_profile.save()
+
+        now = timezone.now()
+        # Fill capacity with wide intervals
+        self._fill_capacity(2, now + timedelta(hours=6), now + timedelta(hours=20))
+
+        # New package with narrower interval fully inside
+        pkg = self._create_package(state=PackageState.FROZEN, barcode='CAP-NEW')
+        plan = RotationPlan.objects.create(
+            package=pkg, target_ready_at=now + timedelta(hours=18),
+            planned_thaw_start_at=now + timedelta(hours=8),
+            planned_thaw_queue_at=now + timedelta(hours=7),
+            planned_freeze_start_at=now - timedelta(hours=1),
+            planned_freeze_end_at=now + timedelta(hours=5),
+            freeze_profile=self.freeze_profile,
+            thaw_profile=self.thaw_profile,
+            freeze_duration=timedelta(hours=8),
+            thaw_duration=timedelta(hours=12),
+            status=PlanStatus.PLANNED,
+        )
+
+        with self.assertRaises(ValueError, msg='Thaw capacity exceeded'):
+            add_to_thaw_queue(pkg, rotation_plan=plan, actor='test')
+        self.assertEqual(pkg.current_state, PackageState.FROZEN)
+
+    # Case 2: partial overlap
+    def test_partial_overlap_rejects(self):
+        """New interval partially overlaps existing → rejected when at capacity."""
+        self.thaw_profile.thaw_capacity = 1
+        self.thaw_profile.save()
+
+        now = timezone.now()
+        self._fill_capacity(1, now + timedelta(hours=6), now + timedelta(hours=12))
+
+        pkg = self._create_package(state=PackageState.FROZEN, barcode='CAP-NEW')
+        plan = RotationPlan.objects.create(
+            package=pkg, target_ready_at=now + timedelta(hours=14),
+            planned_thaw_start_at=now + timedelta(hours=10),
+            planned_thaw_queue_at=now + timedelta(hours=9),
+            planned_freeze_start_at=now - timedelta(hours=1),
+            planned_freeze_end_at=now + timedelta(hours=9),
+            freeze_profile=self.freeze_profile,
+            thaw_profile=self.thaw_profile,
+            freeze_duration=timedelta(hours=8),
+            thaw_duration=timedelta(hours=12),
+            status=PlanStatus.PLANNED,
+        )
+
+        with self.assertRaises(ValueError, msg='Thaw capacity exceeded'):
+            add_to_thaw_queue(pkg, rotation_plan=plan, actor='test')
+
+    # Case 3: same start time
+    def test_same_start_rejects(self):
+        """New interval starts at same time as existing → rejected when at capacity."""
+        self.thaw_profile.thaw_capacity = 1
+        self.thaw_profile.save()
+
+        now = timezone.now()
+        self._fill_capacity(1, now + timedelta(hours=6), now + timedelta(hours=12))
+
+        pkg = self._create_package(state=PackageState.FROZEN, barcode='CAP-NEW')
+        plan = RotationPlan.objects.create(
+            package=pkg, target_ready_at=now + timedelta(hours=14),
+            planned_thaw_start_at=now + timedelta(hours=6),  # same start
+            planned_thaw_queue_at=now + timedelta(hours=5),
+            planned_freeze_start_at=now - timedelta(hours=1),
+            planned_freeze_end_at=now + timedelta(hours=5),
+            freeze_profile=self.freeze_profile,
+            thaw_profile=self.thaw_profile,
+            freeze_duration=timedelta(hours=8),
+            thaw_duration=timedelta(hours=12),
+            status=PlanStatus.PLANNED,
+        )
+
+        with self.assertRaises(ValueError, msg='Thaw capacity exceeded'):
+            add_to_thaw_queue(pkg, rotation_plan=plan, actor='test')
+
+    # Case 4: same end time
+    def test_same_end_rejects(self):
+        """New interval ends at same time as existing → rejected when at capacity."""
+        self.thaw_profile.thaw_capacity = 1
+        self.thaw_profile.save()
+
+        now = timezone.now()
+        self._fill_capacity(1, now + timedelta(hours=6), now + timedelta(hours=12))
+
+        pkg = self._create_package(state=PackageState.FROZEN, barcode='CAP-NEW')
+        plan = RotationPlan.objects.create(
+            package=pkg, target_ready_at=now + timedelta(hours=12),  # same end
+            planned_thaw_start_at=now + timedelta(hours=4),
+            planned_thaw_queue_at=now + timedelta(hours=3),
+            planned_freeze_start_at=now - timedelta(hours=1),
+            planned_freeze_end_at=now + timedelta(hours=3),
+            freeze_profile=self.freeze_profile,
+            thaw_profile=self.thaw_profile,
+            freeze_duration=timedelta(hours=8),
+            thaw_duration=timedelta(hours=12),
+            status=PlanStatus.PLANNED,
+        )
+
+        with self.assertRaises(ValueError, msg='Thaw capacity exceeded'):
+            add_to_thaw_queue(pkg, rotation_plan=plan, actor='test')
+
+    # Case 5: adjacent intervals with no overlap
+    def test_adjacent_no_overlap_allows(self):
+        """Adjacent intervals (no overlap) → allowed even at capacity."""
+        self.thaw_profile.thaw_capacity = 1
+        self.thaw_profile.save()
+
+        now = timezone.now()
+        self._fill_capacity(1, now + timedelta(hours=6), now + timedelta(hours=12))
+
+        # New interval starts exactly when existing ends
+        pkg = self._create_package(state=PackageState.FROZEN, barcode='CAP-NEW')
+        plan = RotationPlan.objects.create(
+            package=pkg, target_ready_at=now + timedelta(hours=18),
+            planned_thaw_start_at=now + timedelta(hours=12),  # starts when other ends
+            planned_thaw_queue_at=now + timedelta(hours=11),
+            planned_freeze_start_at=now + timedelta(hours=3),
+            planned_freeze_end_at=now + timedelta(hours=11),
+            freeze_profile=self.freeze_profile,
+            thaw_profile=self.thaw_profile,
+            freeze_duration=timedelta(hours=8),
+            thaw_duration=timedelta(hours=12),
+            status=PlanStatus.PLANNED,
+        )
+
+        # Should succeed — no overlap
+        entry = add_to_thaw_queue(pkg, rotation_plan=plan, actor='test')
+        self.assertIsNotNone(entry)
+        pkg.refresh_from_db()
+        self.assertEqual(pkg.current_state, PackageState.THAW_QUEUED)
+
+    # Case 6: capacity = 1
+    def test_capacity_one_full(self):
+        """Capacity=1: first package takes all capacity, second rejected."""
+        self.thaw_profile.thaw_capacity = 1
+        self.thaw_profile.save()
+
+        now = timezone.now()
+        self._fill_capacity(1, now + timedelta(hours=6), now + timedelta(hours=12))
+
+        pkg2 = self._create_package(state=PackageState.FROZEN, barcode='CAP-2')
+        plan2 = RotationPlan.objects.create(
+            package=pkg2, target_ready_at=now + timedelta(hours=14),
+            planned_thaw_start_at=now + timedelta(hours=8),
+            planned_thaw_queue_at=now + timedelta(hours=7),
+            planned_freeze_start_at=now - timedelta(hours=1),
+            planned_freeze_end_at=now + timedelta(hours=7),
+            freeze_profile=self.freeze_profile,
+            thaw_profile=self.thaw_profile,
+            freeze_duration=timedelta(hours=8),
+            thaw_duration=timedelta(hours=12),
+            status=PlanStatus.PLANNED,
+        )
+
+        with self.assertRaises(ValueError, msg='Thaw capacity exceeded'):
+            add_to_thaw_queue(pkg2, rotation_plan=plan2, actor='test')
+
+    # Case 7: capacity = 2, fill both, third rejected
+    def test_capacity_two_full(self):
+        """Capacity=2: fill both slots, third rejected."""
+        self.thaw_profile.thaw_capacity = 2
+        self.thaw_profile.save()
+
+        now = timezone.now()
+        self._fill_capacity(2, now + timedelta(hours=6), now + timedelta(hours=12))
+
+        pkg3 = self._create_package(state=PackageState.FROZEN, barcode='CAP-3')
+        plan3 = RotationPlan.objects.create(
+            package=pkg3, target_ready_at=now + timedelta(hours=14),
+            planned_thaw_start_at=now + timedelta(hours=8),
+            planned_thaw_queue_at=now + timedelta(hours=7),
+            planned_freeze_start_at=now - timedelta(hours=1),
+            planned_freeze_end_at=now + timedelta(hours=7),
+            freeze_profile=self.freeze_profile,
+            thaw_profile=self.thaw_profile,
+            freeze_duration=timedelta(hours=8),
+            thaw_duration=timedelta(hours=12),
+            status=PlanStatus.PLANNED,
+        )
+
+        with self.assertRaises(ValueError, msg='Thaw capacity exceeded'):
+            add_to_thaw_queue(pkg3, rotation_plan=plan3, actor='test')
+
+    # Case 8: three overlapping intervals, capacity=3
+    def test_three_overlapping_capacity_three(self):
+        """Three overlapping intervals with capacity=3 → all fit, fourth rejected."""
+        self.thaw_profile.thaw_capacity = 3
+        self.thaw_profile.save()
+
+        now = timezone.now()
+        self._fill_capacity(3, now + timedelta(hours=6), now + timedelta(hours=12))
+
+        pkg4 = self._create_package(state=PackageState.FROZEN, barcode='CAP-4')
+        plan4 = RotationPlan.objects.create(
+            package=pkg4, target_ready_at=now + timedelta(hours=14),
+            planned_thaw_start_at=now + timedelta(hours=8),
+            planned_thaw_queue_at=now + timedelta(hours=7),
+            planned_freeze_start_at=now - timedelta(hours=1),
+            planned_freeze_end_at=now + timedelta(hours=7),
+            freeze_profile=self.freeze_profile,
+            thaw_profile=self.thaw_profile,
+            freeze_duration=timedelta(hours=8),
+            thaw_duration=timedelta(hours=12),
+            status=PlanStatus.PLANNED,
+        )
+
+        with self.assertRaises(ValueError, msg='Thaw capacity exceeded'):
+            add_to_thaw_queue(pkg4, rotation_plan=plan4, actor='test')
+
+    # Case 9: candidate overlaps multiple existing intervals
+    def test_candidate_overlaps_multiple_existing(self):
+        """Candidate spanning across multiple existing intervals → counts all overlaps."""
+        self.thaw_profile.thaw_capacity = 2
+        self.thaw_profile.save()
+
+        now = timezone.now()
+        # Two non-overlapping existing intervals
+        self._fill_capacity(1, now + timedelta(hours=6), now + timedelta(hours=9), offset=0)
+        self._fill_capacity(1, now + timedelta(hours=10), now + timedelta(hours=13), offset=10)
+
+        # New candidate spans both
+        pkg = self._create_package(state=PackageState.FROZEN, barcode='CAP-SPAN')
+        plan = RotationPlan.objects.create(
+            package=pkg, target_ready_at=now + timedelta(hours=14),
+            planned_thaw_start_at=now + timedelta(hours=7),
+            planned_thaw_queue_at=now + timedelta(hours=6),
+            planned_freeze_start_at=now - timedelta(hours=1),
+            planned_freeze_end_at=now + timedelta(hours=6),
+            freeze_profile=self.freeze_profile,
+            thaw_profile=self.thaw_profile,
+            freeze_duration=timedelta(hours=8),
+            thaw_duration=timedelta(hours=12),
+            status=PlanStatus.PLANNED,
+        )
+
+        # Spans both intervals → 2 overlaps = capacity full → rejected
+        with self.assertRaises(ValueError, msg='Thaw capacity exceeded'):
+            add_to_thaw_queue(pkg, rotation_plan=plan, actor='test')
+
+    # Case 10: exclude_package behavior
+    def test_exclude_package_in_capacity_check(self):
+        """When re-queuing a package, its old entry should be excluded from count."""
+        self.thaw_profile.thaw_capacity = 1
+        self.thaw_profile.save()
+
+        now = timezone.now()
+        # Fill capacity with a different package
+        self._fill_capacity(1, now + timedelta(hours=6), now + timedelta(hours=12))
+
+        # Create a second package that we'll add, cancel, and re-add
+        pkg = self._create_package(state=PackageState.FROZEN, barcode='CAP-REQUEUE')
+        plan1 = RotationPlan.objects.create(
+            package=pkg, target_ready_at=now + timedelta(hours=14),
+            planned_thaw_start_at=now + timedelta(hours=8),
+            planned_thaw_queue_at=now + timedelta(hours=7),
+            planned_freeze_start_at=now - timedelta(hours=1),
+            planned_freeze_end_at=now + timedelta(hours=7),
+            freeze_profile=self.freeze_profile,
+            thaw_profile=self.thaw_profile,
+            freeze_duration=timedelta(hours=8),
+            thaw_duration=timedelta(hours=12),
+            status=PlanStatus.PLANNED,
+        )
+
+        # This should fail — capacity is full (1/1)
+        with self.assertRaises(ValueError, msg='Thaw capacity exceeded'):
+            add_to_thaw_queue(pkg, rotation_plan=plan1, actor='test')
+
+        # Now cancel the first package's entry to free a slot
+        first_entry = ThawQueueEntry.objects.first()
+        remove_from_thaw_queue(first_entry, actor='test')
+
+        # Now the re-queue should succeed
+        entry = add_to_thaw_queue(pkg, rotation_plan=plan1, actor='test')
+        self.assertIsNotNone(entry)
+        pkg.refresh_from_db()
+        self.assertEqual(pkg.current_state, PackageState.THAW_QUEUED)
