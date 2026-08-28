@@ -1,0 +1,19 @@
+<!-- Shared Dark Mode Script -->
+<script>
+(function(){
+    if(localStorage.getItem('clmeat_dark_mode')==='true'){
+        document.documentElement.classList.add('dark-mode');
+    }
+    window.toggleDarkMode=function(){
+        var d=document.documentElement.classList.toggle('dark-mode');
+        document.body.classList.toggle('dark-mode',d);
+        localStorage.setItem('clmeat_dark_mode',d?'true':'false');
+        document.querySelectorAll('.theme-btn').forEach(function(b){b.textContent=d?'☀️':'🌙';});
+    };
+    document.addEventListener('DOMContentLoaded',function(){
+        var d=document.documentElement.classList.contains('dark-mode');
+        document.body.classList.toggle('dark-mode',d);
+        document.querySelectorAll('.theme-btn').forEach(function(b){b.textContent=d?'☀️':'🌙';});
+    });
+})();
+</script>

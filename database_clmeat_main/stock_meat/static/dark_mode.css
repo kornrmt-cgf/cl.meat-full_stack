@@ -1,0 +1,193 @@
+
+/* ============================================================
+   DARK MODE SUPPORT
+   ============================================================ */
+:root {
+    --bg: #f3f4f6;
+    --card: #ffffff;
+    --card-soft: #f9fafb;
+    --text: #111827;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --input: #ffffff;
+    --blue-soft: #eff6ff;
+}
+
+body.dark-mode, html.dark-mode body {
+    --bg: #0f172a;
+    --card: #1e293b;
+    --card-soft: #172235;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --border: #334155;
+    --input: #0f172a;
+    --blue-soft: #172554;
+    background: var(--bg);
+    color: var(--text);
+}
+
+body.dark-mode .header,
+body.dark-mode .card,
+body.dark-mode .stat,
+body.dark-mode .section,
+body.dark-mode .source,
+body.dark-mode .product,
+body.dark-mode .folder,
+body.dark-mode .folder summary,
+body.dark-mode .modal,
+body.dark-mode .pack-info,
+body.dark-mode .sync-toolbar,
+body.dark-mode .stat-card,
+body.dark-mode .table-wrapper,
+body.dark-mode .card,
+body.dark-mode .calc-box {
+    background: var(--card);
+    color: var(--text);
+    border-color: var(--border);
+}
+
+body.dark-mode .product-info,
+body.dark-mode .source-info,
+body.dark-mode .stat-title,
+body.dark-mode .folder-date,
+body.dark-mode .empty,
+body.dark-mode .empty-state {
+    color: var(--muted);
+}
+
+body.dark-mode .form-control,
+body.dark-mode input,
+body.dark-mode select,
+body.dark-mode textarea {
+    background: var(--input);
+    color: var(--text);
+    border-color: var(--border);
+}
+
+body.dark-mode .sync-toolbar,
+body.dark-mode .pack-info,
+body.dark-mode .calc-box {
+    background: var(--blue-soft);
+}
+
+body.dark-mode .modal input,
+body.dark-mode .modal select,
+body.dark-mode .modal textarea {
+    background: var(--input);
+    color: var(--text);
+    border-color: var(--border);
+}
+
+body.dark-mode thead th {
+    background: #0f172a;
+    color: #64748b;
+}
+
+body.dark-mode tbody td {
+    border-top-color: var(--border);
+    color: var(--text);
+}
+
+body.dark-mode tbody tr:hover {
+    background: rgba(56, 189, 248, 0.05);
+}
+
+/* Theme toggle button */
+.theme-btn {
+    width: 44px;
+    height: 44px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--card);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.theme-btn:hover {
+    transform: translateY(-1px);
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media(max-width: 768px) {
+    .header {
+        flex-direction: column;
+        gap: 12px;
+        align-items: stretch;
+    }
+
+    .header-actions {
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr) !important;
+    }
+
+    .grid-2, .grid-3 {
+        grid-template-columns: 1fr !important;
+    }
+
+    .parts-grid {
+        grid-template-columns: 1fr !important;
+    }
+
+    .bar-chart {
+        height: 150px !important;
+    }
+
+    .bar {
+        width: 12px !important;
+    }
+
+    .bar-label {
+        font-size: 8px !important;
+    }
+
+    table {
+        font-size: 12px;
+    }
+
+    thead th, tbody td {
+        padding: 8px 10px;
+    }
+
+    .modal {
+        width: 95vw !important;
+        padding: 16px !important;
+    }
+
+    .calc-row {
+        flex-direction: column;
+    }
+
+    .filter-bar {
+        flex-direction: column;
+    }
+
+    .section-header {
+        flex-direction: column;
+        gap: 8px;
+    }
+}
+
+@media(max-width: 480px) {
+    .stats-grid {
+        grid-template-columns: 1fr !important;
+    }
+
+    .header h1 {
+        font-size: 18px !important;
+    }
+
+    .stat-card .value {
+        font-size: 22px !important;
+    }
+}

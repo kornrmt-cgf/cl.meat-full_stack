@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}Workload พนักงาน - CL.MEAT TaskManager{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex items-center justify-between flex-wrap gap-4">
+        <div>
+            <h1 class="text-3xl font-bold text-dark-text">👥 Workload พนักงาน</h1>
+            <p class="text-dark-muted mt-1">{{ target_date|date:"l d F Y" }}</p>
+        </div>
+        <div class="flex items-center gap-2">
+            <a href="?date={{ target_date|add:'-1 days'|date:'Y-m-d' }}" class="btn btn-ghost text-sm">← ก่อนหน้า</a>
+            <a href="?date={{ today|date:'Y-m-d' }}" class="btn btn-primary text-sm">วันนี้</a>
+            <a href="?date={{ target_date|add:'1 days'|date:'Y-m-d' }}" class="btn btn-ghost text-sm">ถัดไป →</a>
+        </div>
+    </div>
+
+    <!-- Employee Cards -->
+    {% if employee_workload %}
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {% for emp in employee_workload %}
+        <a href="{% url 'dashboard:employee-detail' emp.user.pk %}?date_from={{ target_date|date:'Y-m-d' }}&date_to={{ target_date|date:'Y-m-d' }}"
+           class="card hover-glow block">
+            <div class="flex items-center gap-3 mb-4">
+                <div class="w-12 h-12 bg-primary-600 rounded-full flex items-center justify-center">
+                    <span class="text-white font-bold">{{ emp.user.initials }}</span>
+                </div>
+                <div>
+                    <h3 class="font-semibold text-dark-text">{{ emp.user.display_name }}</h3>
+                    <p class="text-xs text-dark-muted">{{ emp.user.email }}</p>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-3 gap-3 text-center">
+                <div class="p-2 bg-dark-bg rounded-lg">
+                    <p class="text-lg font-bold text-primary-400">{{ emp.assigned }}</p>
+                    <p class="text-xs text-dark-muted">มอบหมาย</p>
+                </div>
+                <div class="p-2 bg-dark-bg rounded-lg">
+                    <p class="text-lg font-bold text-emerald-400">{{ emp.completed }}</p>
+                    <p class="text-xs text-dark-muted">เสร็จ</p>
+                </div>
+                <div class="p-2 bg-dark-bg rounded-lg">
+                    <p class="text-lg font-bold text-amber-400">{{ emp.in_progress }}</p>
+                    <p class="text-xs text-dark-muted">ทำอยู่</p>
+                </div>
+            </div>
+
+            <div class="flex justify-between mt-4 text-xs">
+                <span class="text-dark-muted">ปัญหา: <span class="text-red-400">{{ emp.problem }}</span></span>
+                <span class="text-dark-muted">เกินกำหนด: <span class="text-red-400">{{ emp.overdue }}</span></span>
+            </div>
+
+            <!-- Progress bar -->
+            {% if emp.assigned > 0 %}
+            <div class="w-full bg-dark-bg rounded-full h-2 mt-3">
+                <div class="bg-emerald-500 h-2 rounded-full" style="width: {% widthratio emp.completed emp.assigned 100 %}%"></div>
+            </div>
+            {% endif %}
+        </a>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="card text-center py-12 text-dark-muted">
+        <p class="text-4xl mb-2">📭</p>
+        <p class="text-lg">ไม่มีข้อมูล workload สำหรับวันนี้</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

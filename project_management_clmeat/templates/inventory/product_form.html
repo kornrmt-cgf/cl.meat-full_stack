@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}{{ title }} - CL.MEAT{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>🏷️ {{ title }}</h1>
+    <a href="{% url 'inventory:product_list' %}" class="btn btn-outline">← กลับ</a>
+</div>
+<div class="card form-container">
+    <div class="card-body">
+        <form method="post">
+            {% csrf_token %}
+            {% for field in form %}
+            <div class="form-group">
+                <label class="form-label">{{ field.label }}{% if field.field.required %}<span class="required">*</span>{% endif %}</label>
+                {{ field }}
+                {% if field.errors %}<div class="form-errors">{{ field.errors }}</div>{% endif %}
+            </div>
+            {% endfor %}
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary btn-lg">💾 บันทึก</button>
+                <a href="{% url 'inventory:product_list' %}" class="btn btn-outline btn-lg">ยกเลิก</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

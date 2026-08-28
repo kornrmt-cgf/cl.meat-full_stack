@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+
+{% block title %}งานเปิดรับ - CL.MEAT TaskManager{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex items-center justify-between flex-wrap gap-4">
+        <div>
+            <h1 class="text-3xl font-bold text-dark-text">📢 งานเปิดรับ</h1>
+            <p class="text-dark-muted mt-1">
+                แย่งงานเพื่อรับค่าตอบแทน! | 
+                มีงาน {{ open_tasks.count }} รายการรอรับ
+            </p>
+        </div>
+        <div class="flex gap-2">
+            <a href="{% url 'tasks:today' %}" class="btn btn-ghost btn-sm">📋 งานวันนี้</a>
+        </div>
+    </div>
+
+    <!-- Open Tasks Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+        {% for task in open_tasks %}
+        <div class="card border-l-4 border-primary-500 hover-glow relative overflow-hidden">
+            <!-- Reward Badge -->
+            {% if task.reward %}
+            <div class="absolute top-3 right-3 bg-gradient-to-r from-yellow-500 to-amber-500 text-white px-3 py-1 rounded-full text-sm font-bold shadow-lg">
+                💰 ฿{{ task.reward|floatformat:2 }}
+            </div>
+            {% endif %}
+
+            <!-- Priority -->
+            <div class="flex items-center gap-2 mb-3">
+                <span class="badge {{ task.priority_badge_class }}">{{ task.get_priority_display }}</span>
+                {% if task.category %}
+                <span class="badge bg-dark-surface">{{ task.get_category_display }}</span>
+                {% endif %}
+            </div>
+
+            <!-- Title -->
+            <h3 class="font-bold text-dark-text text-lg pr-20">{{ task.title }}</h3>
+            
+            {% if task.description %}
+            <p class="text-sm text-dark-muted mt-2 line-clamp-2">{{ task.description }}</p>
+            {% endif %}
+
+            <!-- Schedule -->
+            <div class="flex items-center gap-4 mt-4 text-sm text-dark-muted">
+                {% if task.start_at %}
+                <span class="flex items-center gap-1">▶️ เริ่ม {{ task.start_at|date:"H:i" }}</span>
+                {% endif %}
+                {% if task.deadline %}
+                <span class="flex items-center gap-1">⏰ กำหนด {{ task.deadline|date:"H:i" }}</span>
+                {% endif %}
+            </div>
+
+            {% if task.estimated_minutes %}
+            <p class="text-xs text-dark-muted mt-2">⏱ ใช้เวลาประมาณ {{ task.estimated_minutes }} นาที</p>
+            {% endif %}
+
+            <!-- Team -->
+            {% if task.team %}
+            <p class="text-xs text-dark-muted mt-1">👥 {{ task.team.name }}</p>
+            {% endif %}
+
+            <!-- Claim Button -->
+            <div class="mt-4 pt-4 border-t border-dark-border">
+                <form method="post" action="{% url 'tasks:claim' task.pk %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-primary w-full text-base py-3 font-bold hover:scale-[1.02] transition-transform">
+                        ⚡ แย่งงานนี้! 
+                        {% if task.reward %}— ฿{{ task.reward|floatformat:2 }}{% endif %}
+                    </button>
+                </form>
+            </div>
+        </div>
+        {% empty %}
+        <div class="card text-center py-16 col-span-full">
+            <p class="text-6xl mb-4">📭</p>
+            <p class="text-xl font-semibold text-dark-text">ไม่มีงานเปิดรับในตอนนี้</p>
+            <p class="text-dark-muted mt-2">ลองกลับมาเช็คอีกครั้งภายหลัง</p>
+            <a href="{% url 'tasks:today' %}" class="btn btn-ghost mt-4">📋 ดูงานวันนี้</a>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}ประวัติงาน - CL.MEAT{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>📜 ประวัติงาน</h1>
+    <a href="{% url 'operations:today' %}" class="btn btn-outline">📋 งานวันนี้</a>
+</div>
+
+<div class="table-container">
+    {% if tasks %}
+    <div class="table-responsive">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th data-sortable>เวลาทำเสร็จ</th>
+                    <th data-sortable>ประเภทงาน</th>
+                    <th data-sortable>สินค้า</th>
+                    <th data-sortable>กำหนดทำ</th>
+                    <th data-sortable>สถานะ</th>
+                    <th data-sortable>ผู้ทำ</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for task in tasks %}
+                <tr>
+                    <td class="text-sm">{{ task.completed_at|date:"d/m/Y H:i"|default:"-" }}</td>
+                    <td><span class="status-badge status-{{ task.task_type|lower }}">{{ task.get_task_type_display }}</span></td>
+                    <td><strong>{{ task.package.product.name }}</strong> {{ task.package.weight }} กก.</td>
+                    <td class="text-sm">{{ task.scheduled_at|date:"d/m/Y H:i" }}</td>
+                    <td><span class="status-badge status-{{ task.status|lower }}">{% if task.status == 'COMPLETED' %}✅{% elif task.status == 'OVERDUE' %}🔴{% else %}{{ task.get_status_display }}{% endif %}</span></td>
+                    <td class="text-sm">{{ task.completed_by|default:"-" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <div class="empty-state-icon">📜</div>
+        <h3>ยังไม่มีประวัติงาน</h3>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

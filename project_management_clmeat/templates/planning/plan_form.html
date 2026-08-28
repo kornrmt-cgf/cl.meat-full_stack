@@ -1,0 +1,558 @@
+{% extends "base.html" %}
+{% load static %}
+{% load user_permissions %}
+
+{% block title %}สร้างแผนงาน - CL.MEAT{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>📋 สร้างแผนงานหมุนเวียน</h1>
+    <a href="{% url 'planning:plan_list' %}" class="btn btn-outline">← กลับ</a>
+</div>
+
+<!-- DASHBOARD: Product Planning Cards -->
+<div id="dashboard-section">
+    <div class="d-flex gap-3 mb-4" style="align-items:center;flex-wrap:wrap;">
+        <h2 style="margin:0;flex:1;">สินค้าที่ต้องวางแผน</h2>
+        <div class="d-flex gap-2">
+            <button class="btn btn-sm btn-outline filter-btn active" data-filter="ALL">ทั้งหมด</button>
+            <button class="btn btn-sm btn-outline filter-btn" data-filter="OUT_OF_STOCK" style="border-color:var(--danger);color:var(--danger);">ไม่มีสต็อค</button>
+            <button class="btn btn-sm btn-outline filter-btn" data-filter="LOW_STOCK" style="border-color:#c87c1f;color:#c87c1f;">ใกล้หมด</button>
+            <button class="btn btn-sm btn-outline filter-btn" data-filter="PLANNING_REQUIRED" style="border-color:var(--primary);color:var(--primary);">ต้องวางแผน</button>
+            <button class="btn btn-sm btn-outline filter-btn" data-filter="SUFFICIENT" style="border-color:var(--success);color:var(--success);">เพียงพอ</button>
+        </div>
+    </div>
+
+    <div id="dashboard-loading" class="text-center py-8">
+        <div class="spinner"></div>
+        <p class="text-muted mt-2">กำลังโหลดข้อมูล...</p>
+    </div>
+
+    <div id="dashboard-empty" style="display:none;" class="text-center py-8">
+        <div style="font-size:3rem;">📦</div>
+        <p class="text-muted mt-2">ไม่มีสินค้าที่ต้องวางแผนในขณะนี้</p>
+    </div>
+
+    <div id="product-cards" class="product-cards-grid" style="display:none;"></div>
+</div>
+
+<!-- MODAL: Product Detail + Create Plan Form -->
+<div id="product-modal" class="modal-overlay" style="display:none;">
+    <div class="modal-content product-detail-modal" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3 id="modal-product-name">—</h3>
+            <button class="modal-close" onclick="closeProductModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <!-- Status + Stock Info -->
+            <div class="modal-status-row">
+                <span id="modal-status-badge" class="planning-status-badge">—</span>
+                <span id="modal-category" class="text-muted text-sm">—</span>
+            </div>
+
+            <div class="modal-info-grid">
+                <div class="modal-info-item">
+                    <div class="modal-info-label">สต็อคปัจจุบัน</div>
+                    <div class="modal-info-value" id="modal-stock">—</div>
+                </div>
+                <div class="modal-info-item">
+                    <div class="modal-info-label">ใช้เฉลี่ย/วัน</div>
+                    <div class="modal-info-value" id="modal-usage">—</div>
+                </div>
+                <div class="modal-info-item">
+                    <div class="modal-info-label">ครอบคลุม</div>
+                    <div class="modal-info-value" id="modal-coverage">—</div>
+                </div>
+                <div class="modal-info-item">
+                    <div class="modal-info-label">คาดว่าสต็อคหมด</div>
+                    <div class="modal-info-value text-warning" id="modal-stockout">—</div>
+                </div>
+                <div class="modal-info-item">
+                    <div class="modal-info-label">สินค้าเข้ามา</div>
+                    <div class="modal-info-value" id="modal-incoming">—</div>
+                </div>
+                <div class="modal-info-item">
+                    <div class="modal-info-label">มีแผนแล้ว</div>
+                    <div class="modal-info-value" id="modal-planned">—</div>
+                </div>
+                <div class="modal-info-item full-width">
+                    <div class="modal-info-label">แนะนำให้พร้อม</div>
+                    <div class="modal-info-value text-success" id="modal-recommended">—</div>
+                </div>
+            </div>
+
+            <div class="modal-recommendation" id="modal-recommendation"></div>
+
+            <!-- ===== PLAN CREATION FORM ===== -->
+            <div id="plan-form-area" style="display:none; margin-top: var(--sp-5); border-top: 2px solid var(--border); padding-top: var(--sp-4);">
+                <h4 style="margin: 0 0 var(--sp-4);">📋 สร้างแผนงาน</h4>
+
+                <!-- Package Selection -->
+                <div class="form-group mb-3">
+                    <label class="form-label">📦 เลือกแพ็กเกจ <span class="required">*</span></label>
+                    <select id="plan-package" class="form-select" required>
+                        <option value="">— เลือกแพ็กเกจ —</option>
+                    </select>
+                    <div id="plan-package-info" class="text-sm text-muted mt-1"></div>
+                </div>
+
+                <!-- Target Ready Date/Time -->
+                <div class="d-flex gap-3 mb-3">
+                    <div class="form-group" style="flex:1;">
+                        <label class="form-label">📅 วันที่ต้องการใช้ <span class="required">*</span></label>
+                        <input type="date" id="plan-target-date" class="form-control" required>
+                    </div>
+                    <div class="form-group" style="flex:1;">
+                        <label class="form-label">🕐 เวลา <span class="required">*</span></label>
+                        <input type="time" id="plan-target-time" class="form-control" value="08:00" required>
+                    </div>
+                </div>
+
+                <!-- Profiles -->
+                <div class="d-flex gap-3 mb-3">
+                    <div class="form-group" style="flex:1;">
+                        <label class="form-label">🧊 โปรไฟล์แช่แข็ง</label>
+                    <select id="plan-freeze-profile" class="form-select">
+                        {% for p in freeze_profiles %}
+                        <option value="{{ p.pk }}">{{ p.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group" style="flex:1;">
+                    <label class="form-label">💧 โปรไฟล์ละลาย</label>
+                    <select id="plan-thaw-profile" class="form-select">
+                        {% for p in thaw_profiles %}
+                        <option value="{{ p.pk }}">{{ p.name }}</option>
+                        {% endfor %}
+                    </select>
+                    </div>
+                </div>
+
+                <!-- Schedule Preview -->
+                <div id="plan-schedule-preview" class="mb-3" style="display:none;">
+                    <div class="card" style="border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--sp-3) var(--sp-4);">
+                        <div class="text-xs text-muted mb-2" style="text-transform:uppercase; letter-spacing:0.5px;">ตารางการเตรียมงาน (คำนวณอัตโนมัติ)</div>
+                        <div class="d-flex gap-4 flex-wrap" style="font-size: 0.85rem;">
+                            <div><span class="text-muted">เริ่มแช่:</span> <strong id="prev-freeze-start">—</strong></div>
+                            <div><span class="text-muted">สิ้นแช่:</span> <strong id="prev-freeze-end">—</strong></div>
+                            <div><span class="text-muted">เข้าคิว:</span> <strong id="prev-queue">—</strong></div>
+                            <div><span class="text-muted">เริ่มละลาย:</span> <strong id="prev-thaw-start">—</strong></div>
+                            <div><span class="text-success">✅ พร้อม:</span> <strong id="prev-ready" class="text-success">—</strong></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Error/Success Messages -->
+                <div id="plan-message" style="display:none;" class="mb-3"></div>
+
+                <!-- Submit -->
+                <div class="d-flex gap-3 justify-content-end">
+                    <button type="button" class="btn btn-outline" onclick="closeProductModal()">ปิด</button>
+                    <button type="button" class="btn btn-primary" id="plan-submit-btn" onclick="submitPlan()" disabled>
+                        💾 สร้างแผนงาน
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.product-cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: var(--sp-4); }
+.product-card { background: var(--card-bg, var(--bg)); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--sp-5); cursor: pointer; transition: all 0.2s ease; position: relative; overflow: hidden; }
+.product-card:hover { border-color: var(--primary); box-shadow: 0 4px 16px rgba(0,0,0,0.1); transform: translateY(-2px); }
+.product-card.status-OUT_OF_STOCK { border-left: 4px solid var(--danger); }
+.product-card.status-STOCK_GAP { border-left: 4px solid #d97706; }
+.product-card.status-LOW_STOCK { border-left: 4px solid #c87c1f; }
+.product-card.status-PLANNING_REQUIRED { border-left: 4px solid var(--primary); }
+.product-card.status-INCOMING { border-left: 4px solid #3b82f6; animation: incomingPulse 3s ease-in-out infinite; }
+.product-card.status-SUFFICIENT { border-left: 4px solid var(--success); }
+.product-card.status-OVERSTOCKED { border-left: 4px solid #8b5cf6; }
+@keyframes incomingPulse { 0%, 100% { border-left-color: #3b82f6; } 50% { border-left-color: #93c5fd; } }
+.card-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: var(--sp-3); }
+.card-product-name { font-size: var(--text-lg); font-weight: 600; color: var(--text); }
+.card-sku { font-size: var(--text-xs); color: var(--text-muted); font-family: monospace; }
+.card-stats { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-2); margin-top: var(--sp-3); }
+.card-stat { display: flex; flex-direction: column; }
+.card-stat-label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.card-stat-value { font-size: var(--text-base); font-weight: 600; color: var(--text); }
+.card-stat-value.text-danger { color: var(--danger); }
+.card-stat-value.text-warning { color: #c87c1f; }
+.card-stat-value.text-success { color: var(--success); }
+.card-action-hint { margin-top: var(--sp-3); padding-top: var(--sp-3); border-top: 1px solid var(--border); font-size: var(--text-sm); color: var(--text-muted); display: flex; justify-content: space-between; align-items: center; }
+.card-action-hint .arrow { color: var(--primary); font-weight: bold; }
+
+.planning-status-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 9999px; font-size: var(--text-sm); font-weight: 600; }
+.planning-status-badge.sufficient { background: #dcfce7; color: #166534; }
+.planning-status-badge.low_stock { background: #fef3c7; color: #92400e; }
+.planning-status-badge.out_of_stock { background: #fee2e2; color: #991b1b; }
+.planning-status-badge.incoming { background: #dbeafe; color: #1e40af; }
+.planning-status-badge.planning_required { background: #e0e7ff; color: #3730a3; }
+.planning-status-badge.stock_gap { background: #fef3c7; color: #c2410c; }
+.planning-status-badge.overstocked { background: #ede9fe; color: #5b21b6; }
+[data-theme="dark"] .planning-status-badge.sufficient { background: #14532d; color: #86efac; }
+[data-theme="dark"] .planning-status-badge.low_stock { background: #78350f; color: #fcd34d; }
+[data-theme="dark"] .planning-status-badge.out_of_stock { background: #7f1d1d; color: #fca5a5; }
+[data-theme="dark"] .planning-status-badge.incoming { background: #1e3a5f; color: #93c5fd; }
+[data-theme="dark"] .planning-status-badge.planning_required { background: #312e81; color: #c7d2fe; }
+[data-theme="dark"] .planning-status-badge.stock_gap { background: #7c2d12; color: #fdba74; }
+[data-theme="dark"] .planning-status-badge.overstocked { background: #4c1d95; color: #c4b5fd; }
+
+.modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center; animation: fadeIn 0.2s ease; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+.modal-content { background: var(--bg); border-radius: var(--radius-lg); width: 90%; max-width: 620px; max-height: 90vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,0.2); animation: slideUp 0.25s ease; }
+@keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+.modal-header { display: flex; justify-content: space-between; align-items: center; padding: var(--sp-5) var(--sp-5) var(--sp-3); border-bottom: 1px solid var(--border); }
+.modal-header h3 { margin: 0; font-size: var(--text-xl); }
+.modal-close { background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--text-muted); padding: 4px 8px; border-radius: var(--radius-md); }
+.modal-close:hover { background: var(--hover-bg); }
+.modal-body { padding: var(--sp-5); }
+.modal-status-row { display: flex; align-items: center; gap: var(--sp-3); margin-bottom: var(--sp-4); }
+.modal-info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); }
+.modal-info-item.full-width { grid-column: 1 / -1; }
+.modal-info-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
+.modal-info-value { font-size: var(--text-lg); font-weight: 600; color: var(--text); }
+.modal-recommendation { margin-top: var(--sp-4); padding: var(--sp-3) var(--sp-4); border-radius: var(--radius-md); font-size: var(--text-sm); line-height: 1.5; }
+.modal-recommendation.info { background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; }
+.modal-recommendation.warning { background: #fffbeb; color: #92400e; border: 1px solid #fde68a; }
+.modal-recommendation.danger { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+.modal-recommendation.success { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+[data-theme="dark"] .modal-recommendation.info { background: #1e3a5f; color: #93c5fd; border-color: #1e40af; }
+[data-theme="dark"] .modal-recommendation.warning { background: #78350f; color: #fcd34d; border-color: #92400e; }
+[data-theme="dark"] .modal-recommendation.danger { background: #7f1d1d; color: #fca5a5; border-color: #991b1b; }
+[data-theme="dark"] .modal-recommendation.success { background: #14532d; color: #86efac; border-color: #166534; }
+
+.spinner { width: 40px; height: 40px; border: 3px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.filter-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
+</style>
+
+<script>
+var dashboardCards = [];
+var selectedProduct = null;
+var currentFilter = 'ALL';
+var modalPackages = [];
+
+// Profile durations in hours (rendered from Django context)
+var freezeProfileHours = { {% for p in freeze_profiles %}'{{ p.pk }}': {{ p.default_duration.total_seconds }}{% if not forloop.last %},{% endif %}{% endfor %} };
+var thawProfileHours = { {% for p in thaw_profiles %}'{{ p.pk }}': {{ p.default_duration.total_seconds }}{% if not forloop.last %},{% endif %}{% endfor %} };
+
+document.addEventListener('DOMContentLoaded', function() {
+    loadDashboard();
+    var preselectedId = '{{ preselected_product_id|default:"" }}';
+    if (preselectedId) {
+        setTimeout(function() {
+            var card = dashboardCards.find(function(c) { return c.product_id == preselectedId; });
+            if (card) openProductModal(card);
+        }, 1000);
+    }
+});
+
+function loadDashboard() {
+    document.getElementById('dashboard-loading').style.display = 'block';
+    document.getElementById('dashboard-empty').style.display = 'none';
+    document.getElementById('product-cards').style.display = 'none';
+    fetch('/api/plans/dashboard/')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            dashboardCards = data.cards || [];
+            document.getElementById('dashboard-loading').style.display = 'none';
+            renderCards();
+        })
+        .catch(function() {
+            document.getElementById('dashboard-loading').innerHTML = '<p class="text-danger">เกิดข้อผิดพลาด</p>';
+        });
+}
+
+function renderCards() {
+    var filtered = currentFilter === 'ALL' ? dashboardCards : dashboardCards.filter(function(c) { return c.status === currentFilter; });
+    var container = document.getElementById('product-cards');
+    var emptyState = document.getElementById('dashboard-empty');
+    if (filtered.length === 0) { container.style.display = 'none'; emptyState.style.display = 'block'; return; }
+    emptyState.style.display = 'none'; container.style.display = 'grid'; container.innerHTML = '';
+    filtered.forEach(function(card) {
+        var el = document.createElement('div');
+        el.className = 'product-card status-' + card.status;
+        el.onclick = function() { openProductModal(card); };
+        var sc = getStatusColor(card.status);
+        var cc = getCoverageColor(card.coverage_days, card.safety_stock_days);
+        var stockColor = parseFloat(card.current_stock_kg) === 0 ? 'text-danger' : '';
+        el.innerHTML =
+            '<div class="card-top"><div><div class="card-product-name">' + escapeHtml(card.product_name) + '</div><div class="card-sku">' + escapeHtml(card.product_sku) + '</div></div>' +
+            '<span class="planning-status-badge ' + card.status.toLowerCase() + '">' + sc.icon + ' ' + card.status_label + '</span></div>' +
+            '<div class="card-stats">' +
+            '<div class="card-stat"><div class="card-stat-label">สต็อค</div><div class="card-stat-value ' + stockColor + '">' + card.current_stock_kg + ' กก.</div></div>' +
+            '<div class="card-stat"><div class="card-stat-label">ใช้/วัน</div><div class="card-stat-value">' + card.avg_daily_usage_kg + ' กก.</div></div>' +
+            '<div class="card-stat"><div class="card-stat-label">ครอบคลุม</div><div class="card-stat-value ' + cc + '">' + card.coverage_days + ' วัน</div></div>' +
+            '<div class="card-stat"><div class="card-stat-label">สต็อคหมด</div><div class="card-stat-value text-warning">' + fmtDate(card.projected_stockout_date) + '</div></div>' +
+            '</div>' +
+            '<div class="card-action-hint"><span>' + getActionHint(card) + '</span><span class="arrow">→</span></div>';
+        container.appendChild(el);
+    });
+}
+
+function openProductModal(card) {
+    selectedProduct = card;
+    var modal = document.getElementById('product-modal');
+    document.getElementById('modal-product-name').textContent = card.product_name;
+    document.getElementById('modal-category').textContent = card.category;
+    var sb = document.getElementById('modal-status-badge');
+    sb.className = 'planning-status-badge ' + card.status.toLowerCase();
+    sb.textContent = getStatusColor(card.status).icon + ' ' + card.status_label;
+    document.getElementById('modal-stock').textContent = card.current_stock_kg + ' กก.';
+    document.getElementById('modal-usage').textContent = card.avg_daily_usage_kg + ' กก./วัน';
+    document.getElementById('modal-coverage').textContent = card.coverage_days + ' วัน';
+    document.getElementById('modal-stockout').textContent = fmtDate(card.projected_stockout_date) || 'ไม่ทราบ';
+    document.getElementById('modal-incoming').textContent = card.incoming_kg + ' กก.';
+    document.getElementById('modal-planned').textContent = card.planned_kg + ' กก. (' + card.planned_count + ' แผน)';
+    document.getElementById('modal-recommended').textContent = fmtDate(card.recommended_ready_date) || 'ไม่ทราบ';
+    var rec = document.getElementById('modal-recommendation');
+    var ri = getRecommendation(card);
+    rec.className = 'modal-recommendation ' + ri.type;
+    rec.textContent = ri.text;
+
+    // Show plan form only if eligible packages exist
+    var formArea = document.getElementById('plan-form-area');
+    if (card.eligible_count > 0) {
+        formArea.style.display = 'block';
+        loadPackagesForPlan(card.product_id);
+        // Set recommended date
+        if (card.recommended_ready_date) {
+            document.getElementById('plan-target-date').value = card.recommended_ready_date;
+        } else {
+            var tmrw = new Date(); tmrw.setDate(tmrw.getDate() + 1);
+            document.getElementById('plan-target-date').value = tmrw.toISOString().split('T')[0];
+        }
+    } else {
+        formArea.style.display = 'none';
+    }
+
+    // Reset form state
+    document.getElementById('plan-message').style.display = 'none';
+    document.getElementById('plan-submit-btn').disabled = true;
+    document.getElementById('plan-schedule-preview').style.display = 'none';
+
+    modal.style.display = 'flex';
+}
+
+function closeProductModal() {
+    document.getElementById('product-modal').style.display = 'none';
+    selectedProduct = null;
+    modalPackages = [];
+}
+
+// Close on overlay click (outside modal-content)
+document.getElementById('product-modal').addEventListener('click', function(e) {
+    if (e.target === this) closeProductModal();
+});
+document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeProductModal(); });
+
+// Filter buttons
+document.querySelectorAll('.filter-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        document.querySelectorAll('.filter-btn').forEach(function(b) { b.classList.remove('active'); });
+        this.classList.add('active');
+        currentFilter = this.dataset.filter;
+        renderCards();
+    });
+});
+
+// ==================== PLAN CREATION ====================
+
+function loadPackagesForPlan(productId) {
+    var sel = document.getElementById('plan-package');
+    sel.innerHTML = '<option value="">กำลังโหลด...</option>';
+    fetch('/api/plans/eligible-packages/?product_id=' + productId)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            modalPackages = data.packages || [];
+            sel.innerHTML = '<option value="">— เลือกแพ็กเกจ (' + modalPackages.length + ' รายการ) —</option>';
+            modalPackages.forEach(function(p) {
+                var opt = document.createElement('option');
+                opt.value = p.id;
+                opt.textContent = p.display;
+                opt.dataset.state = p.state || '';
+                opt.dataset.stateLabel = p.state_label || '';
+                opt.dataset.stateIcon = p.state_icon || '';
+                sel.appendChild(opt);
+            });
+            var stateSummary = {};
+            modalPackages.forEach(function(p) {
+                var st = p.state || 'FROZEN';
+                var label = p.state_label || st;
+                stateSummary[label] = (stateSummary[label] || 0) + 1;
+            });
+            var parts = Object.keys(stateSummary).map(function(s) { return stateSummary[s] + ' ' + s; });
+            document.getElementById('plan-package-info').innerHTML = modalPackages.length + ' แพ็กเกจพร้อมสร้างแผน (' + parts.join(', ') + ')';
+            checkPlanFormReady();
+        });
+}
+
+document.getElementById('plan-package').addEventListener('change', function() {
+    var pkgId = this.value;
+    var info = document.getElementById('plan-package-info');
+    if (!pkgId) { info.innerHTML = ''; checkPlanFormReady(); return; }
+    var pkg = modalPackages.find(function(p) { return p.id == pkgId; });
+    if (pkg) {
+        var stateIcon = pkg.state_icon || '';
+        var stateLabel = pkg.state_label || '';
+        var stateClass = pkg.state_class || '';
+        info.innerHTML = '<strong>' + pkg.product_name + '</strong> | ' + pkg.weight + ' กก. | ' + (pkg.barcode || '-') +
+            ' <span class="badge badge-sm ' + stateClass + '" style="margin-left:6px;">' + stateIcon + ' ' + stateLabel + '</span>';
+    }
+    checkPlanFormReady();
+    updateSchedulePreview();
+});
+
+document.getElementById('plan-target-date').addEventListener('change', function() { checkPlanFormReady(); updateSchedulePreview(); });
+document.getElementById('plan-target-time').addEventListener('change', function() { checkPlanFormReady(); updateSchedulePreview(); });
+document.getElementById('plan-freeze-profile').addEventListener('change', function() { updateSchedulePreview(); });
+document.getElementById('plan-thaw-profile').addEventListener('change', function() { updateSchedulePreview(); });
+
+function checkPlanFormReady() {
+    var pkg = document.getElementById('plan-package').value;
+    var date = document.getElementById('plan-target-date').value;
+    var time = document.getElementById('plan-target-time').value;
+    document.getElementById('plan-submit-btn').disabled = !(pkg && date && time);
+}
+
+function updateSchedulePreview() {
+    var date = document.getElementById('plan-target-date').value;
+    var time = document.getElementById('plan-target-time').value;
+    if (!date || !time) return;
+
+    var freezeId = document.getElementById('plan-freeze-profile').value;
+    var thawId = document.getElementById('plan-thaw-profile').value;
+    if (!freezeId || !thawId) return;
+
+    var freezeSecs = freezeProfileHours[freezeId];
+    var thawSecs = thawProfileHours[thawId];
+    if (!freezeSecs || !thawSecs) return;
+
+    var freezeH = Math.round(freezeSecs / 3600);
+    var thawH = Math.round(thawSecs / 3600);
+
+    var target = new Date(date + 'T' + time);
+    var thawStart = new Date(target.getTime() - thawH * 3600000);
+    var queueTime = new Date(thawStart.getTime() - 30 * 60000);
+    var freezeEnd = new Date(thawStart.getTime() - 15 * 60000);
+    var freezeStart = new Date(freezeEnd.getTime() - freezeH * 3600000);
+
+    var fmt = function(d) { return d.toLocaleDateString('th-TH', {day:'2-digit',month:'short'}) + ' ' + d.toLocaleTimeString('th-TH', {hour:'2-digit',minute:'2-digit'}); };
+
+    document.getElementById('prev-freeze-start').textContent = fmt(freezeStart);
+    document.getElementById('prev-freeze-end').textContent = fmt(freezeEnd);
+    document.getElementById('prev-queue').textContent = fmt(queueTime);
+    document.getElementById('prev-thaw-start').textContent = fmt(thawStart);
+    document.getElementById('prev-ready').textContent = fmt(target);
+    document.getElementById('plan-schedule-preview').style.display = 'block';
+}
+
+function submitPlan() {
+    var pkgId = document.getElementById('plan-package').value;
+    var dateStr = document.getElementById('plan-target-date').value;
+    var timeStr = document.getElementById('plan-target-time').value;
+    var freezeId = document.getElementById('plan-freeze-profile').value;
+    var thawId = document.getElementById('plan-thaw-profile').value;
+
+    if (!pkgId || !dateStr || !timeStr || !freezeId || !thawId) {
+        showPlanMessage('danger', 'กรุณากรอกข้อมูลให้ครบทุกช่อง');
+        return;
+    }
+
+    var btn = document.getElementById('plan-submit-btn');
+    btn.disabled = true;
+    btn.textContent = '⏳ กำลังสร้าง...';
+
+    // Build target_ready_at ISO string
+    var targetReady = dateStr + 'T' + timeStr + ':00+07:00';
+
+    fetch('/api/plans/create/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+        body: JSON.stringify({
+            package_id: parseInt(pkgId),
+            freeze_profile_id: parseInt(freezeId),
+            thaw_profile_id: parseInt(thawId),
+            target_ready_at: targetReady,
+            actor: '{{ request.user.username|default:"admin" }}'
+        })
+    })
+    .then(function(r) { return r.json().then(function(d) { return {ok: r.ok, data: d}; }); })
+    .then(function(result) {
+        if (result.ok && result.data.id) {
+            showPlanMessage('success', '✅ สร้างแผนงาน #' + result.data.id + ' สำเร็จ!');
+            // Remove the used package from the list
+            modalPackages = modalPackages.filter(function(p) { return p.id != pkgId; });
+            var sel = document.getElementById('plan-package');
+            sel.innerHTML = '<option value="">— เลือกแพ็กเกจ (' + modalPackages.length + ' รายการ) —</option>';
+            modalPackages.forEach(function(p) {
+                var opt = document.createElement('option');
+                opt.value = p.id; opt.textContent = p.display;
+                sel.appendChild(opt);
+            });
+            sel.value = '';
+            document.getElementById('plan-package-info').textContent = modalPackages.length + ' แพ็กเกจที่เหลือ';
+            document.getElementById('plan-schedule-preview').style.display = 'none';
+            // Reload dashboard after a short delay
+            setTimeout(function() { loadDashboard(); }, 1500);
+        } else {
+            showPlanMessage('danger', '❌ ' + (result.data.error || result.data.message || 'เกิดข้อผิดพลาด'));
+        }
+        btn.disabled = false;
+        btn.textContent = '💾 สร้างแผนงาน';
+        checkPlanFormReady();
+    })
+    .catch(function(err) {
+        showPlanMessage('danger', '❌ เกิดข้อผิดพลาดในการเชื่อมต่อ');
+        btn.disabled = false;
+        btn.textContent = '💾 สร้างแผนงาน';
+        checkPlanFormReady();
+    });
+}
+
+function showPlanMessage(type, text) {
+    var el = document.getElementById('plan-message');
+    el.style.display = 'block';
+    el.className = 'alert alert-' + type;
+    el.textContent = text;
+    if (type === 'success') {
+        setTimeout(function() { el.style.display = 'none'; }, 5000);
+    }
+}
+
+function getCsrfToken() {
+    var cookies = document.cookie.split(';');
+    for (var i = 0; i < cookies.length; i++) {
+        var c = cookies[i].trim();
+        if (c.startsWith('csrftoken=')) return c.substring(10);
+    }
+    return '';
+}
+
+// ==================== HELPERS ====================
+function getStatusColor(s) {
+    var m = { 'OUT_OF_STOCK':{icon:'🔴',color:'danger'}, 'STOCK_GAP':{icon:'🟠',color:'warning'}, 'LOW_STOCK':{icon:'🟡',color:'warning'}, 'PLANNING_REQUIRED':{icon:'🔵',color:'primary'}, 'INCOMING':{icon:'🔷',color:'info'}, 'SUFFICIENT':{icon:'🟢',color:'success'}, 'OVERSTOCKED':{icon:'🟣',color:'purple'} };
+    return m[s] || {icon:'⚪',color:'muted'};
+}
+function getCoverageColor(c, s) { c=parseFloat(c); s=parseFloat(s); if(c<=0) return 'text-danger'; if(c<=s) return 'text-warning'; return ''; }
+function getActionHint(c) {
+    var m = { 'OUT_OF_STOCK':'🔴 ไม่มีสต็อค — ต้องเตรียมด่วน', 'STOCK_GAP':'🟠 สต็อคไม่พอ — ต้องวางแผนเพิ่ม', 'LOW_STOCK':'🟡 สต็อคใกล้หมด — ควรเตรียมเพิ่ม', 'PLANNING_REQUIRED':'🔵 มีแพ็กเกจพร้อม — สร้างแผนงาน', 'INCOMING':'🔷 มีสินค้าเข้า — รอเข้าระบบ', 'SUFFICIENT':'🟢 สต็อคเพียงพอ', 'OVERSTOCKED':'🟣 สต็อมากเกิน — ชะลอการสั่ง' };
+    return m[c.status] || '📋 ดูรายละเอียด';
+}
+function getRecommendation(c) {
+    var m = {
+        'OUT_OF_STOCK': {type:'danger', text:'ไม่มีสต็อคสินค้าเลย ต้องสั่งซื้อและเตรียมสินค้าใหม่'},
+        'STOCK_GAP': {type:'danger', text:'สต็อคไม่พอ ต้องเตรียมเพิ่ม '+c.net_required_kg+' กก.'},
+        'LOW_STOCK': {type:'warning', text:'สต็อคใกล้หมด ครอบคลุมแค่ '+c.coverage_days+' วัน'},
+        'PLANNING_REQUIRED': {type:'info', text:'มีแพ็กเกจ '+c.eligible_count+' รายการพร้อมสร้างแผนงาน'},
+        'INCOMING': {type:'info', text:'มีสินค้าเข้ามา '+c.incoming_kg+' กก. รอเข้าระบบ'},
+        'SUFFICIENT': {type:'success', text:'สต็อคเพียงพอ ครอบคลุม '+c.coverage_days+' วัน'},
+        'OVERSTOCKED': {type:'success', text:'สต็อมากเกินเป้า ชะลอการสั่งซื้อ'}
+    };
+    return m[c.status] || {type:'info', text:'ดูรายละเอียดสินค้า'};
+}
+function fmtDate(d) { if(!d) return '—'; var p=d.split('-'); return p[2]+'/'+p[1]+'/'+p[0]; }
+function escapeHtml(t) { if(!t) return ''; var d=document.createElement('div'); d.textContent=t; return d.innerHTML; }
+</script>
+{% endblock %}

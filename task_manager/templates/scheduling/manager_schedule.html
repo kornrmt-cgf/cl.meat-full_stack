@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+
+{% block title %}จัดตาราง - CL.MEAT TaskManager{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex items-center justify-between flex-wrap gap-4">
+        <div>
+            <h1 class="text-3xl font-bold text-dark-text">📊 จัดตารางงาน</h1>
+            <p class="text-dark-muted mt-1">{{ reference_date|date:"l d F Y" }}</p>
+        </div>
+        <div class="flex items-center gap-2">
+            <a href="?date={{ prev_date|date:'Y-m-d' }}{% if selected_employee %}&employee={{ selected_employee.pk }}{% endif %}{% if selected_team %}&team={{ selected_team.pk }}{% endif %}"
+               class="btn btn-ghost text-sm">← ก่อนหน้า</a>
+            <a href="?date={{ today|date:'Y-m-d' }}" class="btn btn-primary text-sm">วันนี้</a>
+            <a href="?date={{ next_date|date:'Y-m-d' }}{% if selected_employee %}&employee={{ selected_employee.pk }}{% endif %}{% if selected_team %}&team={{ selected_team.pk }}{% endif %}"
+               class="btn btn-ghost text-sm">ถัดไป →</a>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card">
+        <div class="flex flex-wrap gap-4 items-end">
+            <div class="flex-1 min-w-[200px]">
+                <label class="block text-sm font-medium text-dark-muted mb-1">พนักงาน</label>
+                <select class="form-input" onchange="updateFilter('employee', this.value)">
+                    <option value="">ทุกคน</option>
+                    {% for emp in employees %}
+                    <option value="{{ emp.pk }}" {% if selected_employee and selected_employee.pk == emp.pk %}selected{% endif %}>
+                        {{ emp.display_name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="flex-1 min-w-[200px]">
+                <label class="block text-sm font-medium text-dark-muted mb-1">ทีม</label>
+                <select class="form-input" onchange="updateFilter('team', this.value)">
+                    <option value="">ทุกทีม</option>
+                    {% for t in teams %}
+                    <option value="{{ t.pk }}" {% if selected_team and selected_team.pk == t.pk %}selected{% endif %}>
+                        {{ t.name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <form method="post" action="{% url 'scheduling:htmx-generate-recurring' %}" class="flex gap-2">
+                {% csrf_token %}
+                <input type="hidden" name="date" value="{{ reference_date|date:'Y-m-d' }}">
+                <button type="submit" class="btn btn-warning text-sm">
+                    🔄 สร้างงานประจำ
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Task List with Drag & Drop -->
+    <div id="schedule-list" class="space-y-3" data-date="{{ reference_date|date:'Y-m-d' }}">
+        {% for task in tasks %}
+        <div class="card hover-glow cursor-move task-item"
+             data-task-id="{{ task.pk }}"
+             draggable="true"
+             ondragstart="handleDragStart(event)"
+             ondragover="handleDragOver(event)"
+             ondrop="handleDrop(event)">
+            <div class="flex items-center gap-4">
+                <!-- Drag Handle -->
+                <div class="text-dark-muted cursor-grab active:cursor-grabbing">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="9" cy="5" r="1"/><circle cx="15" cy="5" r="1"/>
+                        <circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/>
+                        <circle cx="9" cy="19" r="1"/><circle cx="15" cy="19" r="1"/>
+                    </svg>
+                </div>
+
+                <!-- Task Info -->
+                <div class="flex-1">
+                    <div class="flex items-center gap-2">
+                        <span class="badge status-{{ task.status }}">{{ task.get_status_display }}</span>
+                        <span class="badge {{ task.priority_badge_class }}">{{ task.get_priority_display }}</span>
+                        {% if task.is_overdue %}
+                        <span class="badge bg-red-600">⏰ เกินกำหนด</span>
+                        {% endif %}
+                    </div>
+                    <a href="{% url 'tasks:detail' task.pk %}" class="font-semibold text-dark-text hover:text-primary-400 mt-1 block">
+                        {{ task.title }}
+                    </a>
+                    <div class="flex items-center gap-4 mt-2 text-sm text-dark-muted">
+                        {% if task.start_at %}
+                        <span>🕐 {{ task.start_at|date:"H:i" }}</span>
+                        {% endif %}
+                        {% if task.deadline %}
+                        <span>⏰ {{ task.deadline|date:"H:i" }}</span>
+                        {% endif %}
+                        {% for a in task.assignments.all %}
+                        <span>👤 {{ a.assigned_to.display_name }}</span>
+                        {% endfor %}
+                        {% if task.location %}
+                        <span>📍 {{ task.location }}</span>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- Quick Actions -->
+                <div class="flex gap-2">
+                    <a href="{% url 'tasks:detail' task.pk %}" class="btn btn-ghost text-xs px-2 py-1">ดู</a>
+                    <a href="{% url 'tasks:edit' task.pk %}" class="btn btn-ghost text-xs px-2 py-1">แก้ไข</a>
+                </div>
+            </div>
+        </div>
+        {% empty %}
+        <div class="card text-center py-12 text-dark-muted">
+            <p class="text-4xl mb-2">📭</p>
+            <p class="text-lg">ไม่มีงานในวันนี้</p>
+            <p class="text-sm mt-2">กดปุ่ม "สร้างงานประจำ" เพื่อสร้างงานจากแม่แบบ</p>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Filter update
+    function updateFilter(param, value) {
+        const url = new URL(window.location);
+        if (value) {
+            url.searchParams.set(param, value);
+        } else {
+            url.searchParams.delete(param);
+        }
+        window.location = url;
+    }
+
+    // Drag and Drop
+    let draggedElement = null;
+
+    function handleDragStart(e) {
+        draggedElement = e.target.closest('.task-item');
+        draggedElement.classList.add('opacity-50');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', draggedElement.dataset.taskId);
+    }
+
+    function handleDragOver(e) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+
+        const target = e.target.closest('.task-item');
+        if (target && target !== draggedElement) {
+            const rect = target.getBoundingClientRect();
+            const midY = rect.top + rect.height / 2;
+            if (e.clientY < midY) {
+                target.parentNode.insertBefore(draggedElement, target);
+            } else {
+                target.parentNode.insertBefore(draggedElement, target.nextSibling);
+            }
+        }
+    }
+
+    function handleDrop(e) {
+        e.preventDefault();
+        if (draggedElement) {
+            draggedElement.classList.remove('opacity-50');
+
+            // นับตำแหน่งใหม่
+            const items = document.querySelectorAll('.task-item');
+            const taskId = draggedElement.dataset.taskId;
+            let newPosition = 0;
+            items.forEach((item, index) => {
+                if (item.dataset.taskId === taskId) {
+                    newPosition = index;
+                }
+            });
+
+            // ส่งไป server
+            const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
+            fetch(`/schedule/htmx/reorder/${taskId}/`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken,
+                },
+                body: JSON.stringify({ position: newPosition }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'error') {
+                    console.error('Reorder failed:', data.message);
+                    window.location.reload();
+                }
+            })
+            .catch(err => {
+                console.error('Reorder error:', err);
+                window.location.reload();
+            });
+
+            draggedElement = null;
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('.task-item').forEach(item => {
+            item.addEventListener('dragend', () => {
+                item.classList.remove('opacity-50');
+            });
+        });
+    });
+</script>
+{% endblock %}

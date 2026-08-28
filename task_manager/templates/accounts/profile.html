@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+
+{% block title %}โปรไฟล์ - CL.MEAT TaskManager{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto">
+    <!-- Header -->
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold text-dark-text">👤 โปรไฟล์</h1>
+        <p class="text-dark-muted mt-2">จัดการข้อมูลส่วนตัวของคุณ</p>
+    </div>
+
+    <!-- Profile Card -->
+    <div class="card">
+        <!-- Avatar -->
+        <div class="flex items-center gap-4 mb-6">
+            <div class="w-20 h-20 bg-primary-600 rounded-full flex items-center justify-center
+                        shadow-lg shadow-primary-600/30">
+                <span class="text-white text-2xl font-bold">{{ user.initials }}</span>
+            </div>
+            <div>
+                <h2 class="text-xl font-semibold text-dark-text">{{ user.display_name }}</h2>
+                <p class="text-dark-muted">{{ user.email }}</p>
+                {% if profile %}
+                <p class="text-sm text-dark-muted mt-1">
+                    รหัส: {{ profile.employee_id }} | 
+                    {% if profile.role %}
+                    <span style="color: {{ profile.role.color }}">{{ profile.role.name }}</span>
+                    {% endif %}
+                    {% if profile.team %}
+                    | {{ profile.team.name }}
+                    {% endif %}
+                </p>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Info Grid -->
+        <div class="grid grid-cols-2 gap-4 mb-6">
+            <div class="p-4 bg-dark-bg rounded-lg">
+                <p class="text-sm text-dark-muted">ชื่อ</p>
+                <p class="text-dark-text font-medium">{{ user.first_name|default:"-" }}</p>
+            </div>
+            <div class="p-4 bg-dark-bg rounded-lg">
+                <p class="text-sm text-dark-muted">นามสกุล</p>
+                <p class="text-dark-text font-medium">{{ user.last_name|default:"-" }}</p>
+            </div>
+            <div class="p-4 bg-dark-bg rounded-lg">
+                <p class="text-sm text-dark-muted">เบอร์โทรศัพท์</p>
+                <p class="text-dark-text font-medium">{{ user.phone|default:"-" }}</p>
+            </div>
+            <div class="p-4 bg-dark-bg rounded-lg">
+                <p class="text-sm text-dark-muted">วันที่เข้าร่วม</p>
+                <p class="text-dark-text font-medium">{{ user.date_joined|date:"d/m/Y" }}</p>
+            </div>
+        </div>
+
+        {% if profile %}
+        <!-- Settings -->
+        <div class="border-t border-dark-border pt-6">
+            <h3 class="text-lg font-semibold text-dark-text mb-4">⚙️ การตั้งค่า</h3>
+            <div class="grid grid-cols-2 gap-4">
+                <div class="flex items-center justify-between p-4 bg-dark-bg rounded-lg">
+                    <span class="text-dark-muted">ธีม</span>
+                    <span class="badge bg-primary-600 text-white">{{ profile.get_theme_display }}</span>
+                </div>
+                <div class="flex items-center justify-between p-4 bg-dark-bg rounded-lg">
+                    <span class="text-dark-muted">สถานะ</span>
+                    <span class="badge status-{{ profile.status }}">{{ profile.get_status_display }}</span>
+                </div>
+                <div class="flex items-center justify-between p-4 bg-dark-bg rounded-lg">
+                    <span class="text-dark-muted">แจ้งเตือน</span>
+                    <span class="text-dark-text">{{ profile.notification_enabled|yesno:"เปิด,ปิด" }}</span>
+                </div>
+                <div class="flex items-center justify-between p-4 bg-dark-bg rounded-lg">
+                    <span class="text-dark-muted">เสียง</span>
+                    <span class="text-dark-text">{{ profile.sound_enabled|yesno:"เปิด,ปิด" }}</span>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Actions -->
+        <div class="mt-6 flex gap-4">
+            <a href="{% url 'accounts:profile-update' %}" class="btn btn-primary">
+                ✏️ แก้ไขโปรไฟล์
+            </a>
+            <a href="{% url 'tasks:today' %}" class="btn btn-ghost">
+                ← กลับ
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}

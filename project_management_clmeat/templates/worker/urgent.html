@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}งานด่วน - โหมดพนักงาน{% endblock %}
+
+{% block extra_css %}
+<style>
+    body { background: #1a1a2e; color: #fff; font-size: 18px; }
+    .navbar { background: #16213e; }
+    .worker-container { max-width: 900px; margin: 0 auto; padding: 20px; }
+    
+    .section-header {
+        font-size: 1.5rem;
+        font-weight: bold;
+        padding: 16px;
+        border-radius: 12px;
+        margin: 20px 0 12px;
+    }
+    
+    .section-overdue { background: #c62828; }
+    .section-due { background: #E65100; }
+    .section-upcoming { background: #1B5E20; }
+    
+    .task-card {
+        background: #16213e;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 12px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        border-left: 6px solid #333;
+    }
+    
+    .task-card.overdue { border-left-color: #c62828; }
+    .task-card.due { border-left-color: #E65100; }
+    .task-card.upcoming { border-left-color: #4CAF50; }
+    
+    .task-time {
+        font-size: 1.8rem;
+        font-weight: bold;
+        min-width: 80px;
+        text-align: center;
+    }
+    
+    .task-info { flex: 1; }
+    .task-product { font-size: 1.3rem; font-weight: bold; }
+    .task-type { color: #888; font-size: 1rem; }
+    .task-barcode { color: #666; font-size: 0.9rem; }
+    
+    .task-action-btn {
+        padding: 16px 24px;
+        font-size: 1.3rem;
+        font-weight: bold;
+        border: none;
+        border-radius: 12px;
+        cursor: pointer;
+        white-space: nowrap;
+    }
+    
+    .btn-blue { background: #1565C0; color: #fff; }
+    .btn-orange { background: #E65100; color: #fff; }
+    .btn-green { background: #2E7D32; color: #fff; }
+    
+    .empty-msg {
+        text-align: center;
+        padding: 40px;
+        color: #666;
+        font-size: 1.2rem;
+    }
+    
+    .summary-bar {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 20px;
+    }
+    
+    .summary-item {
+        flex: 1;
+        padding: 16px;
+        border-radius: 12px;
+        text-align: center;
+    }
+    
+    .summary-value { font-size: 2rem; font-weight: bold; }
+    .summary-label { font-size: 0.9rem; color: #aaa; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="worker-container">
+    <h1 style="font-size: 2rem; margin-bottom: 20px;">⚡ งานด่วน</h1>
+    
+    <div class="summary-bar">
+        <div class="summary-item" style="background: #c62828;">
+            <div class="summary-value">{{ overdue|length }}</div>
+            <div class="summary-label">เกินกำหนด</div>
+        </div>
+        <div class="summary-item" style="background: #E65100;">
+            <div class="summary-value">{{ due|length }}</div>
+            <div class="summary-label">ถึงเวลาทำ</div>
+        </div>
+        <div class="summary-item" style="background: #1B5E20;">
+            <div class="summary-value">{{ upcoming|length }}</div>
+            <div class="summary-label">กำลังจะมาถึง</div>
+        </div>
+    </div>
+    
+    {% if overdue %}
+    <div class="section-header section-overdue">🔴 เกินกำหนด ({{ overdue|length }})</div>
+    {% for item in overdue %}
+    <div class="task-card overdue">
+        <div class="task-time">{{ item.task.scheduled_at|date:"H:i" }}</div>
+        <div class="task-info">
+            <div class="task-product">{{ item.task.package.product.name }} {{ item.task.package.weight }} กก.</div>
+            <div class="task-type">{{ item.task.get_task_type_display }}</div>
+            <div class="task-barcode">📱 {{ item.task.package.barcode }}</div>
+        </div>
+        <div style="color: #ff5252; font-weight: bold;">{{ item.time_display }}</div>
+    </div>
+    {% endfor %}
+    {% endif %}
+    
+    {% if due %}
+    <div class="section-header section-due">🟡 ถึงเวลาทำแล้ว ({{ due|length }})</div>
+    {% for item in due %}
+    <div class="task-card due">
+        <div class="task-time">{{ item.task.scheduled_at|date:"H:i" }}</div>
+        <div class="task-info">
+            <div class="task-product">{{ item.task.package.product.name }} {{ item.task.package.weight }} กก.</div>
+            <div class="task-type">{{ item.task.get_task_type_display }}</div>
+            <div class="task-barcode">📱 {{ item.task.package.barcode }}</div>
+        </div>
+        <div style="color: #ff9800; font-weight: bold;">ทำเลย</div>
+    </div>
+    {% endfor %}
+    {% endif %}
+    
+    {% if upcoming %}
+    <div class="section-header section-upcoming">🟢 กำลังจะมาถึง ({{ upcoming|length }})</div>
+    {% for item in upcoming %}
+    <div class="task-card upcoming">
+        <div class="task-time">{{ item.task.scheduled_at|date:"H:i" }}</div>
+        <div class="task-info">
+            <div class="task-product">{{ item.task.package.product.name }} {{ item.task.package.weight }} กก.</div>
+            <div class="task-type">{{ item.task.get_task_type_display }}</div>
+            <div class="task-barcode">📱 {{ item.task.package.barcode }}</div>
+        </div>
+        <div style="color: #4CAF50;">{{ item.time_display }}</div>
+    </div>
+    {% endfor %}
+    {% endif %}
+    
+    {% if not overdue and not due and not upcoming %}
+    <div class="empty-msg">
+        <div style="font-size: 4rem;">✅</div>
+        <div style="margin-top: 16px;">ไม่มีงานด่วน</div>
+    </div>
+    {% endif %}
+    
+    <div style="text-align: center; margin-top: 24px;">
+        <a href="{% url 'worker:scan' %}" class="task-action-btn btn-blue" style="text-decoration: none; display: inline-block;">
+            📱 กลับไปสแกน
+        </a>
+    </div>
+</div>
+{% endblock %}

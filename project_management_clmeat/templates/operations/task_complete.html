@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}ทำเสร็จ - CL.MEAT{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>✅ ทำเสร็จ: {{ task.get_task_type_display }}</h1>
+    <a href="{% url 'operations:today' %}" class="btn btn-outline">← กลับ</a>
+</div>
+
+<div class="card" style="max-width:520px;">
+    <div class="card-body">
+        <table class="detail-table mb-4">
+            <tr><td>สินค้า:</td><td><strong>{{ task.package.product.name }}</strong> {{ task.package.weight }} กก.</td></tr>
+            <tr><td>กำหนดทำ:</td><td>{{ task.scheduled_at|date:"d/m/Y H:i" }}</td></tr>
+            <tr><td>สถานะแพ็กเกจ:</td><td><span class="badge badge-sm">{{ task.package.get_current_state_display }}</span></td></tr>
+        </table>
+
+        <form method="post">
+            {% csrf_token %}
+
+            <!-- Worker name (auto-filled, read-only) -->
+            <div class="form-group">
+                <label class="form-label">ผู้ทำ</label>
+                <div class="auto-worker-display">
+                    <span class="worker-icon">👤</span>
+                    <strong>{{ worker_name }}</strong>
+                </div>
+                {{ form.completed_by }}
+            </div>
+
+            <!-- Temperature check for FREEZE_CHECK tasks -->
+            {% if show_temperature %}
+            <div class="form-group temp-check-group">
+                <label class="form-label">
+                    🌡️ ตรวจอุณหภูมิ
+                    {% if freeze_target %}
+                    <span class="freeze-target">(เป้าหมาย: {{ freeze_target }}°C)</span>
+                    {% endif %}
+                </label>
+                <div class="temp-input-row">
+                    {{ form.temperature }}
+                    <span class="temp-unit">°C</span>
+                </div>
+                <div id="temp-feedback" class="temp-feedback"></div>
+                {% if form.temperature.errors %}<div class="form-errors">{{ form.temperature.errors }}</div>{% endif %}
+            </div>
+            {% endif %}
+
+            {% for field in form %}
+                {% if field.name != 'completed_by' and field.name != 'temperature' %}
+                <div class="form-group">
+                    <label class="form-label">{{ field.label }}</label>
+                    {{ field }}
+                    {% if field.errors %}<div class="form-errors">{{ field.errors }}</div>{% endif %}
+                </div>
+                {% endif %}
+            {% endfor %}
+
+            <div class="form-actions">
+                <button type="submit" class="btn btn-success btn-lg">✅ ยืนยันทำเสร็จ</button>
+                <a href="{% url 'operations:today' %}" class="btn btn-outline btn-lg">ยกเลิก</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% if show_temperature %}
+<style>
+.auto-worker-display {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    font-size: 1rem;
+}
+.worker-icon {
+    font-size: 1.3rem;
+}
+.temp-check-group {
+    padding: 16px;
+    background: linear-gradient(135deg, rgba(59,130,246,0.06), rgba(59,130,246,0.02));
+    border: 1px solid rgba(59,130,246,0.2);
+    border-radius: 10px;
+}
+.freeze-target {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    font-weight: normal;
+}
+.temp-input-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.temp-input-row input {
+    font-size: 1.4rem;
+    font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+    width: 160px;
+    padding: 10px 14px;
+    text-align: center;
+}
+.temp-unit {
+    font-size: 1.2rem;
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+.temp-feedback {
+    margin-top: 8px;
+    font-weight: 600;
+    font-size: 0.9rem;
+    min-height: 24px;
+}
+</style>
+
+<script>
+(function() {
+    const target = {{ freeze_target|default:"null" }};
+    const tempInput = document.querySelector('input[name="temperature"]');
+    const feedback = document.getElementById('temp-feedback');
+
+    if (!tempInput || !feedback) return;
+
+    function checkTemp() {
+        const val = parseFloat(tempInput.value);
+        if (isNaN(val)) {
+            feedback.textContent = '';
+            feedback.style.color = '';
+            tempInput.style.borderColor = '';
+            return;
+        }
+        if (target === null) {
+            feedback.textContent = `อุณหภูมิ: ${val}°C`;
+            feedback.style.color = 'var(--text)';
+            return;
+        }
+        if (val <= target) {
+            feedback.textContent = `✅ ผ่าน — ${val}°C ≤ เป้าหมาย ${target}°C`;
+            feedback.style.color = '#16a34a';
+            tempInput.style.borderColor = '#16a34a';
+        } else if (val <= target + 2) {
+            feedback.textContent = `⚠️ สูงเล็กน้อย — ${val}°C (เป้าหมาย ${target}°C)`;
+            feedback.style.color = '#d97706';
+            tempInput.style.borderColor = '#d97706';
+        } else {
+            feedback.textContent = `❌ สูงกว่าเป้าหมาย — ${val}°C (เป้าหมาย ${target}°C)`;
+            feedback.style.color = '#dc2626';
+            tempInput.style.borderColor = '#dc2626';
+        }
+    }
+
+    tempInput.addEventListener('input', checkTemp);
+    checkTemp();
+})();
+</script>
+{% else %}
+<style>
+.auto-worker-display {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    font-size: 1rem;
+}
+.worker-icon {
+    font-size: 1.3rem;
+}
+</style>
+{% endif %}
+{% endblock %}

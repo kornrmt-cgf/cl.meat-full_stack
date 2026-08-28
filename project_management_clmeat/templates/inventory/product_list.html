@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}รายการสินค้า - CL.MEAT{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>🏷️ รายการสินค้า</h1>
+    <a href="{% url 'inventory:product_create' %}" class="btn btn-primary">➕ เพิ่มสินค้า</a>
+</div>
+<div class="table-container">
+    {% if products %}
+    <div class="table-responsive">
+        <table class="data-table">
+            <thead><tr><th data-sortable>SKU</th><th data-sortable>ชื่อ</th><th data-sortable>หมวด</th><th data-sortable>สถานะ</th></tr></thead>
+            <tbody>
+                {% for p in products %}
+                <tr>
+                    <td><span class="font-mono">{{ p.sku }}</span></td>
+                    <td><strong>{{ p.name }}</strong></td>
+                    <td>{{ p.get_category_display }}</td>
+                    <td>{% if p.active %}<span class="badge badge-active">ใช้งาน</span>{% else %}<span class="badge badge-inactive">ปิด</span>{% endif %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}<div class="empty-state"><div class="empty-state-icon">🏷️</div><h3>ยังไม่มีสินค้า</h3></div>{% endif %}
+</div>
+{% endblock %}

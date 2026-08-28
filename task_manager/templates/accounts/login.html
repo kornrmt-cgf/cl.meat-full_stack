@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+
+{% block title %}เข้าสู่ระบบ - CL.MEAT TaskManager{% endblock %}
+
+{% block auth_content %}
+<div class="w-full max-w-md mx-auto px-4">
+
+    <!-- Login Card -->
+    <div class="bg-dark-surface rounded-2xl border border-dark-border p-8 shadow-2xl
+                transition-transform duration-300 ease-out">
+
+        <!-- Logo -->
+        <div class="text-center mb-8">
+            <div class="w-16 h-16 bg-primary-600 rounded-2xl flex items-center justify-center mx-auto mb-4
+                        animate-glow">
+                <span class="text-white text-2xl font-bold">FB</span>
+            </div>
+            <h1 class="text-2xl font-bold text-dark-text">CL.MEAT TaskManager</h1>
+            <p class="text-dark-muted mt-2">ระบบจัดการงานและตารางเวลา</p>
+        </div>
+
+        <!-- Login Form -->
+        <form method="post" class="space-y-5">
+            {% csrf_token %}
+
+            <!-- Error messages -->
+            {% if form.errors %}
+            <div class="p-4 bg-red-900/30 border border-red-700 rounded-lg text-red-300 text-sm">
+                {% for error in form.non_field_errors %}
+                <p>❌ {{ error }}</p>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <!-- Userid -->
+            <div>
+                <label class="block text-sm font-medium text-dark-muted mb-2">👤 รหัสผู้ใช้</label>
+                {{ form.userid }}
+                {% if form.userid.errors %}
+                <p class="text-red-400 text-sm mt-1">{{ form.userid.errors.0 }}</p>
+                {% endif %}
+            </div>
+
+            <!-- Password -->
+            <div>
+                <label class="block text-sm font-medium text-dark-muted mb-2">🔑 รหัสผ่าน</label>
+                {{ form.password }}
+                {% if form.password.errors %}
+                <p class="text-red-400 text-sm mt-1">{{ form.password.errors.0 }}</p>
+                {% endif %}
+            </div>
+
+            <!-- Submit Button -->
+            <button type="submit"
+                    class="btn btn-primary w-full text-base py-3">
+                เข้าสู่ระบบ
+            </button>
+        </form>
+
+        <!-- Register Link -->
+        <div class="mt-6 text-center">
+            <a href="{% url 'accounts:register' %}"
+               class="text-primary-400 hover:text-primary-300 text-sm font-medium transition-colors">
+                📝 สมัครเป็นพนักงานใหม่
+            </a>
+        </div>
+
+        <!-- Demo Account -->
+        <div class="mt-4 p-4 bg-dark-card rounded-lg border border-dark-border">
+            <p class="text-xs text-dark-muted text-center mb-2">บัญชีทดสอบ</p>
+            <div class="text-center text-sm text-dark-text">
+                <p>👤 admin | 🔑 admin1234</p>
+                <p class="text-xs text-dark-muted mt-1">(manager)</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

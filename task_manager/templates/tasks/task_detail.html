@@ -1,0 +1,369 @@
+{% extends "base.html" %}
+
+{% block title %}{{ task.title }} - CL.MEAT TaskManager{% endblock %}
+
+{% block content %}
+<div class="max-w-screen-xl mx-auto space-y-6">
+    <!-- Header -->
+    <div class="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+            <a href="{% url 'tasks:today' %}" class="text-dark-muted hover:text-dark-text text-sm mb-2 inline-block">
+                ← กลับ
+            </a>
+            <h1 class="text-2xl lg:text-3xl font-bold text-dark-text">{{ task.title }}</h1>
+            <div class="flex items-center gap-2 mt-2 flex-wrap">
+                <span class="badge status-{{ task.status }}">{{ task.get_status_display }}</span>
+                <span class="badge {{ task.priority_badge_class }}">{{ task.get_priority_display }}</span>
+                <span class="badge bg-dark-card">{{ task.get_category_display }}</span>
+                {% if task.is_overdue %}
+                <span class="badge bg-red-600 animate-pulse">⏰ เกินกำหนด</span>
+                {% endif %}
+                {% if task.reward > 0 %}
+                <span class="reward-badge">💰 ฿{{ task.reward|floatformat:2 }}</span>
+                {% endif %}
+                {% if task.is_open %}
+                <span class="badge bg-primary-600">📢 งานเปิดรับ</span>
+                {% endif %}
+                {% if task.claimed_by %}
+                <span class="badge bg-emerald-600">⚡ มีคนรับแล้ว</span>
+                {% endif %}
+            </div>
+        </div>
+        {% if user.is_staff or user.is_superuser %}
+        <a href="{% url 'tasks:edit' task.pk %}" class="btn btn-ghost btn-sm">✏️ แก้ไข</a>
+        {% endif %}
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Main Content (2 columns) -->
+        <div class="lg:col-span-2 space-y-6">
+            <!-- Dependencies -->
+            {% with deps=task.dependencies.all %}
+            {% if deps %}
+            <div class="card border-amber-500/30">
+                <h2 class="text-lg font-semibold text-dark-text mb-3">🔗 งานที่ต้องทำก่อน</h2>
+                <div class="space-y-2">
+                    {% for dep in deps %}
+                    <div class="flex items-center gap-3 p-3 bg-dark-bg rounded-lg">
+                        {% if dep.depends_on.status == 'completed' %}
+                        <span class="text-emerald-400 text-lg">✅</span>
+                        {% else %}
+                        <span class="text-amber-400 text-lg animate-pulse">⏳</span>
+                        {% endif %}
+                        <div class="flex-1 min-w-0">
+                            <a href="{% url 'tasks:detail' pk=dep.depends_on.pk %}"
+                               class="text-sm text-primary-400 hover:text-primary-300 truncate block">
+                                {{ dep.depends_on.title }}
+                            </a>
+                            <span class="badge status-{{ dep.depends_on.status }} text-[10px] mt-1">
+                                {{ dep.depends_on.get_status_display }}
+                            </span>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% with blocked_tasks=task.blocks.all %}
+                {% if blocked_tasks %}
+                <div class="mt-3 pt-3 border-t border-dark-border">
+                    <p class="text-xs text-dark-muted mb-2">🔒 งานนี้เป็น blocker ของ:</p>
+                    <div class="space-y-1">
+                        {% for blocked in blocked_tasks %}
+                        <a href="{% url 'tasks:detail' pk=blocked.task.pk %}"
+                           class="text-xs text-primary-400 hover:text-primary-300 block">
+                            → {{ blocked.task.title }}
+                        </a>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+                {% endwith %}
+            </div>
+            {% endif %}
+            {% endwith %}
+
+            <!-- Description -->
+            {% if task.description %}
+            <div class="card">
+                <h2 class="text-lg font-semibold text-dark-text mb-3">📝 รายละเอียด</h2>
+                <p class="text-dark-text whitespace-pre-wrap">{{ task.description }}</p>
+            </div>
+            {% endif %}
+
+            <!-- Action Buttons -->
+            <div class="card">
+                <h2 class="text-lg font-semibold text-dark-text mb-4">⚡ การกระทำ</h2>
+                <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                    {% if task.status == "scheduled" or task.status == "ready" and not task.is_open %}
+                    <form method="post" action="{% url 'tasks:accept' task.pk %}">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-primary w-full">🤝 รับงาน</button>
+                    </form>
+                    {% endif %}
+
+                    {% if task.status == "accepted" %}
+                    <form method="post" action="{% url 'tasks:start' task.pk %}">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-primary w-full">▶️ เริ่มทำ</button>
+                    </form>
+                    {% endif %}
+
+                    {% if task.status == "in_progress" %}
+                    <form method="post" action="{% url 'tasks:complete' task.pk %}">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-success w-full">✅ เสร็จงาน</button>
+                    </form>
+
+                    <form method="post" action="{% url 'tasks:problem' task.pk %}">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-warning w-full">⚠️ ปัญหา</button>
+                    </form>
+
+                    <form method="post" action="{% url 'tasks:error' task.pk %}">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-danger w-full">❌ ข้อผิดพลาด</button>
+                    </form>
+                    {% endif %}
+
+                    {% if task.is_open and not task.claimed_by %}
+                    <form method="post" action="{% url 'tasks:claim' task.pk %}">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-primary w-full">⚡ แย่งงาน</button>
+                    </form>
+                    {% endif %}
+
+                    {% if task.status != "completed" and task.status != "cancelled" %}
+                    <form method="post" action="{% url 'tasks:postpone' task.pk %}">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-ghost w-full border border-dark-border">⏸️ เลื่อนงาน</button>
+                    </form>
+
+                    <form method="post" action="{% url 'tasks:cancel' task.pk %}">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-ghost w-full border border-dark-border text-red-400"
+                                onclick="return confirm('ต้องการยกเลิกงานนี้?')">
+                            🚫 ยกเลิก
+                        </button>
+                    </form>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Activity Log -->
+            <div class="card">
+                <h2 class="text-lg font-semibold text-dark-text mb-4">📜 ประวัติ</h2>
+                <div class="space-y-3 max-h-96 overflow-y-auto">
+                    {% for activity in activities %}
+                    <div class="flex items-start gap-3 p-3 bg-dark-bg rounded-lg">
+                        <div class="w-8 h-8 bg-primary-600 rounded-full flex items-center justify-center
+                                    flex-shrink-0">
+                            <span class="text-white text-xs font-medium">
+                                {% if activity.user %}{{ activity.user.initials }}{% else %}?{% endif %}
+                            </span>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <p class="text-sm text-dark-text">{{ activity.description }}</p>
+                            <p class="text-xs text-dark-muted mt-1">
+                                {{ activity.created_at|date:"d/m/Y H:i" }}
+                            </p>
+                        </div>
+                        <span class="badge bg-dark-card flex-shrink-0">{{ activity.get_action_display }}</span>
+                    </div>
+                    {% empty %}
+                    <p class="text-dark-muted text-center py-4">ยังไม่มีประวัติ</p>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- Reports -->
+            {% if reports %}
+            <div class="card border-red-700">
+                <h2 class="text-lg font-semibold text-dark-text mb-4">🚨 รายงานปัญหา</h2>
+                <div class="space-y-3">
+                    {% for report in reports %}
+                    <div class="p-4 bg-dark-bg rounded-lg">
+                        <div class="flex items-center gap-2 mb-2">
+                            <span class="badge {% if report.resolved %}bg-emerald-600{% else %}bg-red-600{% endif %}">
+                                {{ report.get_report_type_display }}
+                            </span>
+                            <span class="text-sm font-medium text-dark-text">{{ report.title }}</span>
+                        </div>
+                        <p class="text-sm text-dark-muted">{{ report.description }}</p>
+                        {% if report.resolution %}
+                        <p class="text-sm text-emerald-400 mt-2">✅ {{ report.resolution }}</p>
+                        {% endif %}
+                        <p class="text-xs text-dark-muted mt-2">
+                            โดย: {{ report.reported_by.display_name }} | {{ report.created_at|date:"d/m H:i" }}
+                        </p>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Sidebar -->
+        <div class="space-y-6">
+            <!-- Time Info -->
+            <div class="card">
+                <h2 class="text-lg font-semibold text-dark-text mb-4">⏰ เวลา</h2>
+                <div class="space-y-3">
+                    {% if task.prepare_at %}
+                    <div class="flex justify-between items-center">
+                        <span class="text-dark-muted text-sm">🔧 เตรียมงาน</span>
+                        <span class="text-dark-text font-medium">{{ task.prepare_at|date:"d/m H:i" }}</span>
+                    </div>
+                    {% endif %}
+                    {% if task.start_at %}
+                    <div class="flex justify-between items-center">
+                        <span class="text-dark-muted text-sm">▶️ เริ่มงาน</span>
+                        <span class="text-dark-text font-medium">{{ task.start_at|date:"d/m H:i" }}</span>
+                    </div>
+                    {% endif %}
+                    {% if task.deadline %}
+                    <div class="flex justify-between items-center">
+                        <span class="text-dark-muted text-sm">⏰ กำหนดส่ง</span>
+                        <span class="{% if task.is_overdue %}text-red-400 font-bold{% else %}text-dark-text font-medium{% endif %}">
+                            {{ task.deadline|date:"d/m H:i" }}
+                        </span>
+                    </div>
+                    {% endif %}
+                    {% if task.completed_at %}
+                    <div class="flex justify-between items-center">
+                        <span class="text-dark-muted text-sm">✅ เสร็จแล้ว</span>
+                        <span class="text-emerald-400 font-medium">{{ task.completed_at|date:"d/m H:i" }}</span>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            {% if task.reward > 0 %}
+            <div class="card border-amber-500/30">
+                <h2 class="text-lg font-semibold text-dark-text mb-4">💰 ค่าตอบแทน</h2>
+                <p class="text-3xl font-bold text-amber-400">฿{{ task.reward|floatformat:2 }}</p>
+                {% if task.claimed_by %}
+                <div class="mt-3 pt-3 border-t border-dark-border">
+                    <p class="text-xs text-dark-muted">ผู้รับงาน</p>
+                    <div class="flex items-center gap-2 mt-1">
+                        <div class="w-6 h-6 bg-emerald-600 rounded-full flex items-center justify-center">
+                            <span class="text-white text-[10px] font-bold">{{ task.claimed_by.initials }}</span>
+                        </div>
+                        <span class="text-sm text-dark-text font-medium">{{ task.claimed_by.display_name }}</span>
+                    </div>
+                    {% if task.claimed_at %}
+                    <p class="text-xs text-dark-muted mt-1">⏰ {{ task.claimed_at|date:"d/m H:i" }}</p>
+                    {% endif %}
+                </div>
+                {% endif %}
+            </div>
+            {% endif %}
+
+            {% if task.is_open and not task.claimed_by %}
+            <!-- Claim Button (for employees) -->
+            <div class="card border-primary-500/30">
+                <h2 class="text-lg font-semibold text-dark-text mb-4">⚡ แย่งงานนี้!</h2>
+                <p class="text-sm text-dark-muted mb-4">เป็นคนแรกที่กดรับงานนี้</p>
+                <form method="post" action="{% url 'tasks:claim' task.pk %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-primary w-full text-base py-3 font-bold">
+                        ⚡ แย่งงาน 
+                        {% if task.reward > 0 %}— ฿{{ task.reward|floatformat:2 }}{% endif %}
+                    </button>
+                </form>
+            </div>
+            {% endif %}
+
+            <!-- Assignments -->
+            <div class="card">
+                <h2 class="text-lg font-semibold text-dark-text mb-4">👥 ผู้รับผิดชอบ</h2>
+                <div class="space-y-2">
+                    {% for assignment in assignments %}
+                    <div class="flex items-center gap-3 p-2 bg-dark-bg rounded-lg">
+                        <div class="w-8 h-8 bg-primary-600 rounded-full flex items-center justify-center flex-shrink-0">
+                            <span class="text-white text-xs font-medium">
+                                {{ assignment.assigned_to.initials }}
+                            </span>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <p class="text-sm text-dark-text truncate">{{ assignment.assigned_to.display_name }}</p>
+                            {% if assignment.is_primary %}
+                            <span class="text-xs text-primary-400">ผู้รับผิดชอบหลัก</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% empty %}
+                    <p class="text-dark-muted text-sm text-center py-2">ยังไม่มีการมอบหมาย</p>
+                    {% endfor %}
+                </div>
+
+                {% if user.is_staff or user.is_superuser %}
+                <!-- Assign Form (Manager only) -->
+                <form method="post" action="{% url 'tasks:assign' task.pk %}" class="mt-4 pt-4 border-t border-dark-border">
+                    {% csrf_token %}
+                    <label class="block text-xs text-dark-muted mb-2">เพิ่มผู้รับผิดชอบ</label>
+                    <div class="flex flex-col sm:flex-row gap-2">
+                        <select name="employees" multiple class="form-input text-sm flex-1" size="3">
+                            {% for emp in available_employees %}
+                            <option value="{{ emp.pk }}">{{ emp.display_name }}</option>
+                            {% empty %}
+                            <option disabled>ไม่มีพนักงานที่ว่าง</option>
+                            {% endfor %}
+                        </select>
+                        <button type="submit" class="btn btn-primary btn-sm self-start">➕ มอบหมาย</button>
+                    </div>
+                    <p class="text-xs text-dark-muted mt-1">Ctrl+Click เพื่อเลือกหลายคน</p>
+                </form>
+                {% endif %}
+            </div>
+
+            <!-- Location -->
+            {% if task.location %}
+            <div class="card">
+                <h2 class="text-lg font-semibold text-dark-text mb-4">📍 สถานที่</h2>
+                <p class="text-dark-text">{{ task.location }}</p>
+            </div>
+            {% endif %}
+
+            <!-- Notes -->
+            {% if task.notes %}
+            <div class="card">
+                <h2 class="text-lg font-semibold text-dark-text mb-4">📌 หมายเหตุ</h2>
+                <p class="text-dark-text whitespace-pre-wrap text-sm">{{ task.notes }}</p>
+            </div>
+            {% endif %}
+
+            <!-- Meta -->
+            <div class="card">
+                <h2 class="text-lg font-semibold text-dark-text mb-4">ℹ️ ข้อมูล</h2>
+                <div class="space-y-2 text-sm">
+                    <div class="flex justify-between items-center">
+                        <span class="text-dark-muted">สร้างโดย</span>
+                        <span class="text-dark-text">{{ task.created_by.display_name }}</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-dark-muted">สร้างเมื่อ</span>
+                        <span class="text-dark-text">{{ task.created_at|date:"d/m/Y H:i" }}</span>
+                    </div>
+                    {% if task.estimated_minutes %}
+                    <div class="flex justify-between items-center">
+                        <span class="text-dark-muted">เวลาที่คาด</span>
+                        <span class="text-dark-text">{{ task.estimated_minutes }} นาที</span>
+                    </div>
+                    {% endif %}
+                    {% if task.actual_minutes %}
+                    <div class="flex justify-between items-center">
+                        <span class="text-dark-muted">เวลาที่ใช้จริง</span>
+                        <span class="text-dark-text">{{ task.actual_minutes }} นาที</span>
+                    </div>
+                    {% endif %}
+                    {% if task.is_recurring %}
+                    <div class="flex justify-between items-center">
+                        <span class="text-dark-muted">ประเภท</span>
+                        <span class="badge badge-normal">งานประจำ</span>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

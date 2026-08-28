@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}งานวันนี้ - โหมดพนักงาน{% endblock %}
+
+{% block extra_css %}
+<style>
+    body { background: #1a1a2e; color: #fff; font-size: 18px; }
+    .navbar { background: #16213e; }
+    .worker-container { max-width: 900px; margin: 0 auto; padding: 20px; }
+    
+    .section-header {
+        font-size: 1.5rem;
+        font-weight: bold;
+        padding: 16px;
+        border-radius: 12px;
+        margin: 20px 0 12px;
+    }
+    
+    .section-overdue { background: #c62828; }
+    .section-due { background: #E65100; }
+    .section-upcoming { background: #1B5E20; }
+    .section-completed { background: #37474F; }
+    
+    .task-card {
+        background: #16213e;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 12px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        border-left: 6px solid #333;
+    }
+    
+    .task-card.overdue { border-left-color: #c62828; }
+    .task-card.due { border-left-color: #E65100; }
+    .task-card.upcoming { border-left-color: #4CAF50; }
+    .task-card.completed { border-left-color: #4CAF50; opacity: 0.7; }
+    
+    .task-time {
+        font-size: 1.8rem;
+        font-weight: bold;
+        min-width: 80px;
+        text-align: center;
+    }
+    
+    .task-info { flex: 1; }
+    .task-product { font-size: 1.3rem; font-weight: bold; }
+    .task-type { color: #888; font-size: 1rem; }
+    .task-barcode { color: #666; font-size: 0.9rem; }
+    
+    .empty-msg {
+        text-align: center;
+        padding: 40px;
+        color: #666;
+        font-size: 1.2rem;
+    }
+    
+    .count-badge {
+        display: inline-block;
+        background: rgba(255,255,255,0.2);
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 0.9rem;
+        margin-left: 8px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="worker-container">
+    <h1 style="font-size: 2rem; margin-bottom: 20px;">📋 งานวันนี้ <span class="count-badge">{{ total }} งาน</span></h1>
+    
+    {% if categorized.overdue %}
+    <div class="section-header section-overdue">🔴 เกินกำหนด</div>
+    {% for item in categorized.overdue %}
+    <div class="task-card overdue">
+        <div class="task-time">{{ item.task.scheduled_at|date:"H:i" }}</div>
+        <div class="task-info">
+            <div class="task-product">{{ item.task.package.product.name }} {{ item.task.package.weight }} กก.</div>
+            <div class="task-type">{{ item.task.get_task_type_display }}</div>
+            <div class="task-barcode">📱 {{ item.task.package.barcode }}</div>
+        </div>
+        <div style="color: #ff5252; font-weight: bold;">เกินกำหนด</div>
+    </div>
+    {% endfor %}
+    {% endif %}
+    
+    {% if categorized.due_now %}
+    <div class="section-header section-due">🟡 ถึงเวลาทำแล้ว</div>
+    {% for item in categorized.due_now %}
+    <div class="task-card due">
+        <div class="task-time">{{ item.task.scheduled_at|date:"H:i" }}</div>
+        <div class="task-info">
+            <div class="task-product">{{ item.task.package.product.name }} {{ item.task.package.weight }} กก.</div>
+            <div class="task-type">{{ item.task.get_task_type_display }}</div>
+            <div class="task-barcode">📱 {{ item.task.package.barcode }}</div>
+        </div>
+        <div style="color: #ff9800; font-weight: bold;">ทำเลย</div>
+    </div>
+    {% endfor %}
+    {% endif %}
+    
+    {% if categorized.upcoming %}
+    <div class="section-header section-upcoming">🟢 งานที่กำลังจะมาถึง</div>
+    {% for item in categorized.upcoming %}
+    <div class="task-card upcoming">
+        <div class="task-time">{{ item.task.scheduled_at|date:"H:i" }}</div>
+        <div class="task-info">
+            <div class="task-product">{{ item.task.package.product.name }} {{ item.task.package.weight }} กก.</div>
+            <div class="task-type">{{ item.task.get_task_type_display }}</div>
+            <div class="task-barcode">📱 {{ item.task.package.barcode }}</div>
+        </div>
+        <div style="color: #4CAF50;">รอทำ</div>
+    </div>
+    {% endfor %}
+    {% endif %}
+    
+    {% if categorized.completed %}
+    <div class="section-header section-completed">✅ ทำเสร็จแล้ว</div>
+    {% for item in categorized.completed %}
+    <div class="task-card completed">
+        <div class="task-time" style="color: #4CAF50;">✓</div>
+        <div class="task-info">
+            <div class="task-product">{{ item.task.package.product.name }} {{ item.task.package.weight }} กก.</div>
+            <div class="task-type">{{ item.task.get_task_type_display }}</div>
+        </div>
+        <div style="color: #4CAF50;">เสร็จแล้ว</div>
+    </div>
+    {% endfor %}
+    {% endif %}
+    
+    {% if not categorized.overdue and not categorized.due_now and not categorized.upcoming and not categorized.completed %}
+    <div class="empty-msg">
+        <div style="font-size: 4rem;">✅</div>
+        <div style="margin-top: 16px;">ไม่มีงานวันนี้</div>
+    </div>
+    {% endif %}
+    
+    <div style="text-align: center; margin-top: 24px;">
+        <a href="{% url 'worker:scan' %}" style="text-decoration: none; display: inline-block; padding: 16px 32px; background: #1565C0; color: #fff; border-radius: 12px; font-size: 1.2rem; font-weight: bold;">
+            📱 กลับไปสแกน
+        </a>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,3 @@
+REMOVE敏感信息后的内容
+OpenAI API Key: REMOVED — use environment variable OPENAI_API_KEY
+Tunnel token: REMOVED — use environment variable TUNNEL_TOKEN

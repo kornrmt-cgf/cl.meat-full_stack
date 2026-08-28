@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}แผนรายเดือน - CL.MEAT{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>📅 แผนรายเดือน</h1>
+</div>
+
+<div class="card mb-6">
+    <div class="card-body">
+        <div class="d-flex align-center justify-between flex-wrap gap-3">
+            <a href="?year={{ year }}&month={% if month == 1 %}12&year={{ year|add:'-1' }}{% else %}{{ month|add:'-1' }}{% endif %}" class="btn btn-outline">◀ ก่อนหน้า</a>
+            <h3 style="margin:0;">เดือน {{ month }}/{{ year }}</h3>
+            <a href="?year={{ year }}&month={% if month == 12 %}1&year={{ year|add:'1' }}{% else %}{{ month|add:'1' }}{% endif %}" class="btn btn-outline">ถัดไป ▶</a>
+        </div>
+    </div>
+</div>
+
+<div class="table-container">
+    <div class="table-responsive">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th data-sortable>วันที่</th>
+                    <th data-sortable data-type="number">ต้องการ</th>
+                    <th data-sortable data-type="number">วางแผนแล้ว</th>
+                    <th data-sortable data-type="number">คงเหลือ</th>
+                    <th data-sortable>สถานะ</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for day in calendar_data %}
+                <tr class="{% if day.status == 'AT_RISK' %}row-warning{% elif day.status == 'OK' and day.required > 0 %}row-success{% endif %}">
+                    <td><strong>{{ day.date|date:"d/m/Y" }}</strong></td>
+                    <td>{{ day.required }}</td>
+                    <td>{{ day.planned }}</td>
+                    <td>{{ day.remaining }}</td>
+                    <td>
+                        {% if day.status == 'AT_RISK' %}
+                            <span class="status-badge status-at_risk">⚠️ ขาด</span>
+                        {% elif day.status == 'OK' and day.required > 0 %}
+                            <span class="status-badge status-ready_for_sale">✅ OK</span>
+                        {% else %}
+                            <span class="status-badge status-pending">-</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

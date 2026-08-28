@@ -1,0 +1,545 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}สแกนสินค้า - โหมดพนักงาน{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* Worker Mode Styles */
+    body { background: #1a1a2e; color: #fff; font-size: 18px; }
+    .navbar { background: #16213e; }
+    .navbar-brand a { font-size: 1.3rem; }
+    .navbar-item { font-size: 1.1rem; padding: 12px 20px; }
+    
+    .worker-container {
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+    }
+    
+    /* Scanner Input */
+    .scanner-section {
+        background: #0f3460;
+        border-radius: 16px;
+        padding: 30px;
+        margin-bottom: 24px;
+        text-align: center;
+        border: 3px solid #533483;
+    }
+    
+    .scanner-label {
+        font-size: 1.2rem;
+        color: #a8a8a8;
+        margin-bottom: 12px;
+    }
+    
+    .scanner-input {
+        width: 100%;
+        font-size: 2rem;
+        padding: 20px;
+        border: 3px solid #533483;
+        border-radius: 12px;
+        background: #1a1a2e;
+        color: #fff;
+        text-align: center;
+        letter-spacing: 3px;
+        font-weight: bold;
+        outline: none;
+    }
+    
+    .scanner-input:focus {
+        border-color: #e94560;
+        box-shadow: 0 0 20px rgba(233, 69, 96, 0.3);
+    }
+    
+    .scanner-input::placeholder {
+        color: #666;
+        letter-spacing: 1px;
+        font-weight: normal;
+    }
+    
+    /* Package Info Card */
+    .package-card {
+        background: #16213e;
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 20px;
+        border-left: 6px solid #533483;
+    }
+    
+    .package-card.state-FREEZING { border-left-color: #2196F3; }
+    .package-card.state-FROZEN { border-left-color: #00BCD4; }
+    .package-card.state-THAW_QUEUED { border-left-color: #FF9800; }
+    .package-card.state-THAWING { border-left-color: #FF5722; }
+    .package-card.state-READY_FOR_SALE { border-left-color: #4CAF50; }
+    .package-card.state-ON_DISPLAY { border-left-color: #8BC34A; }
+    .package-card.state-REFREEZE_PENDING { border-left-color: #00BCD4; }
+    
+    .package-name {
+        font-size: 2rem;
+        font-weight: bold;
+        margin-bottom: 8px;
+    }
+    
+    .package-meta {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 12px;
+        margin: 16px 0;
+    }
+    
+    .meta-item {
+        background: #1a1a2e;
+        padding: 12px;
+        border-radius: 8px;
+    }
+    
+    .meta-label {
+        font-size: 0.85rem;
+        color: #888;
+    }
+    
+    .meta-value {
+        font-size: 1.2rem;
+        font-weight: bold;
+    }
+    
+    /* State Badge */
+    .state-badge {
+        display: inline-block;
+        padding: 8px 20px;
+        border-radius: 20px;
+        font-size: 1.3rem;
+        font-weight: bold;
+        margin: 8px 0;
+    }
+    
+    .state-badge.PACKED { background: #424242; }
+    .state-badge.FREEZING { background: #1565C0; }
+    .state-badge.FROZEN { background: #00838F; }
+    .state-badge.THAW_QUEUED { background: #E65100; }
+    .state-badge.THAWING { background: #BF360C; }
+    .state-badge.READY_FOR_SALE { background: #2E7D32; }
+    .state-badge.ON_DISPLAY { background: #558B2F; }
+    .state-badge.REFREEZE_PENDING { background: #00695C; }
+    
+    /* Urgency Badge */
+    .urgency-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 20px;
+        border-radius: 12px;
+        font-size: 1.1rem;
+        font-weight: bold;
+    }
+    
+    .urgency-ACTION_REQUIRED { background: #c62828; animation: pulse 2s infinite; }
+    .urgency-OVERDUE { background: #212121; border: 2px solid #c62828; }
+    .urgency-DUE_SOON { background: #f57f17; }
+    .urgency-UPCOMING { background: #e65100; }
+    .urgency-SCHEDULED { background: #2E7D32; }
+    .urgency-OK { background: #1B5E20; }
+    
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
+    }
+    
+    /* Action Buttons */
+    .action-section {
+        margin: 24px 0;
+    }
+    
+    .action-prompt {
+        font-size: 1.3rem;
+        color: #aaa;
+        margin-bottom: 16px;
+        text-align: center;
+    }
+    
+    .action-btn {
+        width: 100%;
+        padding: 24px;
+        font-size: 1.8rem;
+        font-weight: bold;
+        border: none;
+        border-radius: 16px;
+        cursor: pointer;
+        transition: all 0.2s;
+        margin-bottom: 12px;
+    }
+    
+    .action-btn:active {
+        transform: scale(0.97);
+    }
+    
+    .action-btn.blue { background: #1565C0; color: #fff; }
+    .action-btn.blue:hover { background: #0D47A1; }
+    .action-btn.orange { background: #E65100; color: #fff; }
+    .action-btn.orange:hover { background: #BF360C; }
+    .action-btn.green { background: #2E7D32; color: #fff; }
+    .action-btn.green:hover { background: #1B5E20; }
+    .action-btn.purple { background: #6A1B9A; color: #fff; }
+    .action-btn.purple:hover { background: #4A148C; }
+    .action-btn.red { background: #c62828; color: #fff; }
+    .action-btn.red:hover { background: #b71c1c; }
+    
+    .action-btn.secondary {
+        background: #37474F;
+        color: #fff;
+        font-size: 1.2rem;
+        padding: 16px;
+    }
+    
+    /* Error State */
+    .error-card {
+        background: #c62828;
+        border-radius: 16px;
+        padding: 40px;
+        text-align: center;
+        margin: 20px 0;
+    }
+    
+    .error-icon { font-size: 4rem; margin-bottom: 16px; }
+    .error-text { font-size: 1.5rem; }
+    
+    /* Success State */
+    .success-card {
+        background: #2E7D32;
+        border-radius: 16px;
+        padding: 40px;
+        text-align: center;
+        margin: 20px 0;
+        animation: fadeIn 0.3s;
+    }
+    
+    .success-icon { font-size: 4rem; margin-bottom: 16px; }
+    .success-text { font-size: 1.5rem; }
+    
+    @keyframes fadeIn {
+        from { opacity: 0; transform: scale(0.9); }
+        to { opacity: 1; transform: scale(1); }
+    }
+    
+    /* Timeline */
+    .timeline-mini {
+        margin-top: 16px;
+        padding: 12px;
+        background: #1a1a2e;
+        border-radius: 8px;
+    }
+    
+    .timeline-step {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 0;
+        font-size: 0.9rem;
+    }
+    
+    .timeline-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #533483;
+    }
+    
+    .timeline-dot.current { background: #e94560; box-shadow: 0 0 8px #e94560; }
+    .timeline-dot.done { background: #4CAF50; }
+    
+    /* Worker Name Input */
+    .worker-name-section {
+        background: #16213e;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 20px;
+    }
+    
+    .worker-name-input {
+        width: 100%;
+        font-size: 1.2rem;
+        padding: 12px;
+        border: 2px solid #333;
+        border-radius: 8px;
+        background: #1a1a2e;
+        color: #fff;
+    }
+    
+    /* Hidden state indicator */
+    .state-hidden { display: none; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="worker-container">
+    <!-- Worker Identity (read-only, from authenticated user) -->
+    <div class="worker-name-section">
+        <label style="color: #888;">👤 ผู้ปฏิบัติงาน</label>
+        <div style="font-size: 1.2rem; font-weight: bold; color: #fff; padding: 12px;">{{ user.get_full_name|default:user.username }}</div>
+    </div>
+    
+    <!-- Scanner Input -->
+    <div class="scanner-section">
+        <div class="scanner-label">📱 สแกนบาร์โค้ดสินค้า</div>
+        <input type="text" id="barcode-input" class="scanner-input" 
+               placeholder="สแกนบาร์โค้ดที่นี่..." 
+               autocomplete="off" autofocus>
+    </div>
+    
+    <!-- States -->
+    <div id="state-idle" class="state-visible">
+        <div style="text-align: center; padding: 40px; color: #666;">
+            <div style="font-size: 4rem;">📦</div>
+            <div style="font-size: 1.3rem; margin-top: 16px;">สแกนบาร์โค้ดเพื่อเริ่มงาน</div>
+        </div>
+    </div>
+    
+    <div id="state-loading" class="state-hidden">
+        <div style="text-align: center; padding: 40px;">
+            <div class="spinner"></div>
+            <div style="font-size: 1.3rem; margin-top: 16px;">กำลังค้นหา...</div>
+        </div>
+    </div>
+    
+    <div id="state-error" class="state-hidden">
+        <div class="error-card">
+            <div class="error-icon">❌</div>
+            <div class="error-text" id="error-message"></div>
+        </div>
+    </div>
+    
+    <div id="state-success" class="state-hidden">
+        <div class="success-card">
+            <div class="success-icon">✅</div>
+            <div class="success-text" id="success-message"></div>
+        </div>
+    </div>
+    
+    <div id="state-package" class="state-hidden">
+        <div class="package-card" id="package-card">
+            <div class="package-name" id="pkg-name"></div>
+            <div id="pkg-urgency"></div>
+            <div class="package-meta" id="pkg-meta"></div>
+            <div class="timeline-mini" id="pkg-timeline"></div>
+        </div>
+        
+        <div class="action-section" id="action-section">
+            <div class="action-prompt" id="action-prompt"></div>
+            <div id="action-buttons"></div>
+        </div>
+        
+        <button class="action-btn secondary" onclick="resetScanner()">🔄 สแกนสินค้าใหม่</button>
+    </div>
+</div>
+
+<script>
+const STATE_CLASSES = ['state-idle', 'state-loading', 'state-error', 'state-success', 'state-package'];
+
+function showState(stateName) {
+    STATE_CLASSES.forEach(cls => {
+        document.getElementById('state-' + cls.replace('state-', '')).className = cls === stateName ? 'state-visible' : 'state-hidden';
+    });
+}
+
+const STATE_ORDER = ['PACKED', 'FREEZING', 'FROZEN', 'READY_FOR_THAW', 'THAW_QUEUED', 'THAWING', 'READY_FOR_SALE', 'ON_DISPLAY'];
+const STATE_LABELS = {
+    'PACKED': 'บรรจุแล้ว', 'FREEZING': 'กำลังแช่แข็ง', 'FROZEN': 'แช่แข็ง',
+    'READY_FOR_THAW': 'พร้อมละลาย', 'THAW_QUEUED': 'ในคิวละลาย',
+    'THAWING': 'กำลังละลาย', 'READY_FOR_SALE': 'พร้อมขาย',
+    'ON_DISPLAY': 'วางจำหน่าย', 'REFREEZE_PENDING': 'รอแช่แข็ง',
+    'PROCESSING': 'แปรรูป', 'DISCARDED': 'ทิ้งแล้ว', 'COMPLETED': 'เสร็จสิ้น'
+};
+
+function renderTimeline(timeline, currentState) {
+    const container = document.getElementById('pkg-timeline');
+    if (!timeline || timeline.length === 0) {
+        container.innerHTML = '<div style="color: #666; padding: 8px;">ไม่มีประวัติ</div>';
+        return;
+    }
+    
+    let html = '';
+    // Show all historical states
+    const allStates = new Set();
+    allStates.add('PACKED');
+    timeline.forEach(e => { allStates.add(e.to_state); });
+    
+    const stateArray = STATE_ORDER.filter(s => allStates.has(s));
+    
+    stateArray.forEach(state => {
+        const isCurrent = state === currentState;
+        const isDone = STATE_ORDER.indexOf(state) < STATE_ORDER.indexOf(currentState);
+        const dotClass = isCurrent ? 'current' : (isDone ? 'done' : '');
+        
+        const event = timeline.find(e => e.to_state === state);
+        const timeStr = event ? event.timestamp : '';
+        const actor = event ? (event.actor || 'ระบบ') : '';
+        
+        html += `<div class="timeline-step">
+            <div class="timeline-dot ${dotClass}"></div>
+            <span style="color: ${isCurrent ? '#fff' : '#888'}; font-weight: ${isCurrent ? 'bold' : 'normal'}">
+                ${STATE_LABELS[state] || state}
+            </span>
+            ${timeStr ? `<span style="color: #666; margin-left: auto; font-size: 0.8rem;">${timeStr}</span>` : ''}
+        </div>`;
+    });
+    
+    container.innerHTML = html;
+}
+
+function renderActionButtons(action) {
+    const container = document.getElementById('action-buttons');
+    const prompt = document.getElementById('action-prompt');
+    
+    if (!action) {
+        container.innerHTML = '<div style="text-align: center; color: #888; padding: 20px;">ไม่มีการดำเนินการสำหรับสถานะนี้</div>';
+        prompt.textContent = '';
+        return;
+    }
+    
+    if (action.multiple) {
+        prompt.textContent = action.worker_prompt || 'เลือกการดำเนินการ:';
+        container.innerHTML = action.options.map(opt =>
+            `<button class="action-btn ${opt.color}" onclick="executeAction('${opt.api_endpoint}')">${opt.button_label}</button>`
+        ).join('');
+    } else {
+        prompt.textContent = action.worker_prompt || '';
+        container.innerHTML = `<button class="action-btn ${action.color}" onclick="executeAction('${action.api_endpoint}')">${action.button_label}</button>`;
+    }
+}
+
+let currentBarcode = '';
+
+async function scanBarcode(barcode) {
+    if (!barcode) return;
+    currentBarcode = barcode;
+    showState('state-loading');
+    
+    try {
+        const resp = await fetch(`/api/worker/scan/?barcode=${encodeURIComponent(barcode)}`);
+        const data = await resp.json();
+        
+        if (!data.success) {
+            document.getElementById('error-message').textContent = data.error;
+            showState('state-error');
+            playBeep('error');
+            setTimeout(resetScanner, 2000);
+            return;
+        }
+        
+        // Fill package card
+        const pkg = data.package;
+        document.getElementById('pkg-name').textContent = `${pkg.product_name} ${pkg.weight} กก.`;
+        
+        document.getElementById('pkg-urgency').innerHTML = 
+            `<span class="urgency-badge urgency-${data.urgency.level}">${data.urgency.icon} ${data.urgency.label}</span>
+             <span class="state-badge ${pkg.current_state}">${pkg.state_display}</span>`;
+        
+        document.getElementById('pkg-meta').innerHTML = `
+            <div class="meta-item"><div class="meta-label">บาร์โค้ด</div><div class="meta-value">${pkg.barcode}</div></div>
+            <div class="meta-item"><div class="meta-label">ล็อต</div><div class="meta-value">${pkg.batch_number}</div></div>
+            <div class="meta-item"><div class="meta-label">ที่เก็บ</div><div class="meta-value">${pkg.storage_location || '-'}</div></div>
+            <div class="meta-item"><div class="meta-label">วันที่บรรจุ</div><div class="meta-value">${pkg.packed_at || '-'}</div></div>
+        `;
+        
+        renderTimeline(data.timeline, pkg.current_state);
+        renderActionButtons(data.action);
+        
+        document.getElementById('package-card').className = `package-card state-${pkg.current_state}`;
+        
+        showState('state-package');
+        playBeep('success');
+        
+    } catch (err) {
+        document.getElementById('error-message').textContent = 'เกิดข้อผิดพลาดในการเชื่อมต่อ';
+        showState('state-error');
+        setTimeout(resetScanner, 2000);
+    }
+}
+
+async function executeAction(endpoint) {
+    try {
+        const resp = await fetch('/api/worker/action/', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken()},
+            body: JSON.stringify({
+                barcode: currentBarcode,
+                action_endpoint: endpoint,
+            })
+        });
+        
+        const data = await resp.json();
+        
+        if (data.error) {
+            document.getElementById('error-message').textContent = data.error;
+            showState('state-error');
+            playBeep('error');
+            setTimeout(resetScanner, 2000);
+            return;
+        }
+        
+        document.getElementById('success-message').textContent = data.message;
+        showState('state-success');
+        playBeep('success');
+        
+        setTimeout(() => {
+            resetScanner();
+        }, 1500);
+        
+    } catch (err) {
+        document.getElementById('error-message').textContent = 'เกิดข้อผิดพลาด: ' + err.message;
+        showState('state-error');
+        setTimeout(resetScanner, 2000);
+    }
+}
+
+function resetScanner() {
+    currentBarcode = '';
+    document.getElementById('barcode-input').value = '';
+    showState('state-idle');
+    document.getElementById('barcode-input').focus();
+}
+
+function playBeep(type) {
+    try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        
+        if (type === 'success') {
+            osc.frequency.value = 800;
+            gain.gain.value = 0.1;
+        } else {
+            osc.frequency.value = 300;
+            gain.gain.value = 0.15;
+        }
+        
+        osc.start();
+        setTimeout(() => {
+            osc.stop();
+            ctx.close();
+        }, 150);
+    } catch(e) {}
+}
+
+// Scanner input handler
+document.getElementById('barcode-input').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        const barcode = this.value.trim();
+        if (barcode) {
+            scanBarcode(barcode);
+        }
+    }
+});
+
+// Keep focus on scanner
+document.addEventListener('keydown', function(e) {
+    if (!e.target.matches('input, textarea, select')) {
+        document.getElementById('barcode-input').focus();
+    }
+});
+</script>
+{% endblock %}

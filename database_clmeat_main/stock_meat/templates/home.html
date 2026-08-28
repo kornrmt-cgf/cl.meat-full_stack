@@ -1,0 +1,4426 @@
+{% extends "base.html" %}
+{% block title %}CL.MEAT Stock{% endblock %}
+{% block extra_css %}
+<style>
+/* ---- Home page-specific ---- */
+:root {
+    --bg: #f0f2f5;
+    --card: #ffffff;
+    --card-soft: #f8f9fa;
+    --text: #1a1a2e;
+    --text-secondary: #6b7280;
+    --border: #e2e5ea;
+    --input-bg: #ffffff;
+    --accent: #2563eb;
+    --accent-hover: #1d4ed8;
+    --success: #16a34a;
+    --warning: #f59e0b;
+    --danger: #dc2626;
+    --info: #0ea5e9;
+    --shadow: 0 1px 3px rgba(0,0,0,0.08);
+    --shadow-lg: 0 4px 16px rgba(0,0,0,0.1);
+    --radius: 12px;
+    --radius-sm: 8px;
+    --transition: 0.2s ease;
+}
+
+html.dark-mode {
+    --bg: #0f172a;
+    --card: #1e293b;
+    --card-soft: #172235;
+    --text: #e2e8f0;
+    --text-secondary: #94a3b8;
+    --border: #334155;
+    --input-bg: #0f172a;
+    --shadow: 0 1px 3px rgba(0,0,0,0.3);
+    --shadow-lg: 0 4px 16px rgba(0,0,0,0.4);
+}
+
+/* ---- Reset & Base ---- */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Sarabun', Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    transition: background var(--transition), color var(--transition);
+    -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ---- Container ---- */
+.container { max-width: 1200px; margin: 0 auto; padding: 16px; }
+
+/* ============================================================
+   NAVBAR (with hamburger)
+   ============================================================ */
+.navbar {
+    position: sticky; top: 0; z-index: 100;
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    padding: 0 16px;
+    box-shadow: var(--shadow);
+    transition: background var(--transition);
+}
+.navbar-inner {
+    max-width: 1200px; margin: 0 auto;
+    display: flex; align-items: center; justify-content: space-between;
+    height: 56px;
+}
+.navbar-brand {
+    font-size: 18px; font-weight: 900;
+    color: var(--text); display: flex; align-items: center; gap: 8px;
+    white-space: nowrap;
+}
+.navbar-brand:hover { text-decoration: none; }
+.navbar-links {
+    display: flex; align-items: center; gap: 6px;
+}
+.navbar-links a, .navbar-links button {
+    padding: 6px 12px; border-radius: var(--radius-sm);
+    font-size: 13px; font-weight: 600; cursor: pointer;
+    border: 1px solid var(--border); background: var(--card-soft);
+    color: var(--text); text-decoration: none; white-space: nowrap;
+    transition: all var(--transition); display: inline-flex;
+    align-items: center; gap: 4px;
+}
+.navbar-links a:hover, .navbar-links button:hover {
+    background: var(--accent); color: white; border-color: var(--accent);
+    text-decoration: none;
+}
+.navbar-links a.active {
+    background: var(--accent); color: white; border-color: var(--accent);
+}
+
+/* Theme toggle */
+.theme-btn {
+    width: 36px; height: 36px; border-radius: 50%;
+    border: 1px solid var(--border); background: var(--card-soft);
+    cursor: pointer; font-size: 16px; display: inline-flex;
+    align-items: center; justify-content: center; transition: all var(--transition);
+    padding: 0;
+}
+.theme-btn:hover { background: var(--accent); border-color: var(--accent); }
+.nav-active { color: var(--accent) !important; background: rgba(37,99,235,0.08); border-radius: var(--radius-sm); }
+
+/* Hamburger */
+.hamburger {
+    display: none; width: 36px; height: 36px; border: none;
+    background: transparent; cursor: pointer; padding: 6px;
+    flex-direction: column; justify-content: center; gap: 5px;
+}
+.hamburger span {
+    display: block; width: 100%; height: 2px; background: var(--text);
+    border-radius: 2px; transition: all 0.3s;
+}
+
+/* ============================================================
+   CARDS & SECTIONS
+   ============================================================ */
+.card, .section {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 20px;
+    margin-bottom: 16px; box-shadow: var(--shadow);
+    transition: background var(--transition), border-color var(--transition);
+}
+.card-title, .section-title {
+    font-size: 18px; font-weight: 700; color: var(--text);
+    margin-bottom: 16px; display: flex; align-items: center; gap: 8px;
+}
+
+/* Stats */
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.stat-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px;
+    box-shadow: var(--shadow); transition: all var(--transition);
+}
+.stat-card .label { font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; font-weight: 600; }
+.stat-card .value { font-size: 28px; font-weight: 800; }
+
+/* Grid layouts */
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 20px; }
+
+/* ============================================================
+   TABLES
+   ============================================================ */
+.table-wrapper {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden;
+    box-shadow: var(--shadow); transition: all var(--transition);
+}
+table { width: 100%; border-collapse: collapse; }
+thead th {
+    background: var(--card-soft); padding: 10px 14px; text-align: left;
+    font-size: 11px; font-weight: 700; color: var(--text-secondary);
+    text-transform: uppercase; letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border);
+}
+tbody td {
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    font-size: 13px; color: var(--text);
+}
+tbody tr:hover { background: rgba(37, 99, 235, 0.04); }
+tbody tr:last-child td { border-bottom: none; }
+.empty-state { text-align: center; padding: 32px 16px; color: var(--text-secondary); }
+
+/* ============================================================
+   BUTTONS
+   ============================================================ */
+.btn {
+    padding: 8px 16px; border: none; border-radius: var(--radius-sm);
+    font-size: 13px; font-weight: 700; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+    transition: all var(--transition); text-decoration: none;
+    white-space: nowrap;
+}
+.btn:hover { transform: translateY(-1px); text-decoration: none; }
+.btn-primary { background: var(--accent); color: white; }
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-success { background: var(--success); color: white; }
+.btn-success:hover { background: #15803d; }
+.btn-danger { background: var(--danger); color: white; }
+.btn-danger:hover { background: #b91c1c; }
+.btn-warning { background: var(--warning); color: #1a1a2e; }
+.btn-warning:hover { background: #d97706; }
+.btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text-secondary); }
+.btn-outline:hover { border-color: var(--accent); color: var(--accent); background: rgba(37,99,235,0.05); }
+.btn-sm { padding: 4px 10px; font-size: 11px; }
+
+/* ============================================================
+   FORMS
+   ============================================================ */
+.form-group { margin-bottom: 14px; }
+.form-group label {
+    display: block; font-size: 12px; font-weight: 700;
+    color: var(--text-secondary); margin-bottom: 5px;
+}
+.form-control, input, select, textarea {
+    width: 100%; padding: 9px 12px;
+    background: var(--input-bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    font-size: 14px; transition: border-color var(--transition);
+}
+.form-control:focus, input:focus, select:focus, textarea:focus {
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+/* ============================================================
+   MODALS
+   ============================================================ */
+.modal-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.6); z-index: 1000;
+    justify-content: center; align-items: center; padding: 16px;
+    backdrop-filter: blur(4px);
+}
+.modal-overlay.active { display: flex; }
+.modal {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 16px; width: 500px; max-width: 95vw;
+    padding: 24px; box-shadow: var(--shadow-lg);
+    max-height: 85vh; overflow-y: auto;
+}
+.modal h3 { font-size: 18px; font-weight: 700; margin-bottom: 16px; }
+.modal .form-group { margin-bottom: 14px; }
+.modal .form-group label { font-size: 12px; color: var(--text-secondary); margin-bottom: 5px; display: block; }
+.modal select, .modal input, .modal textarea {
+    width: 100%; padding: 9px 12px; background: var(--input-bg);
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    color: var(--text); font-size: 14px;
+}
+.modal .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+
+/* ============================================================
+   TOAST
+   ============================================================ */
+.toast-container { position: fixed; top: 16px; right: 16px; z-index: 2000; }
+.toast {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 12px 18px;
+    margin-bottom: 8px; min-width: 280px;
+    display: flex; align-items: center; gap: 10px;
+    box-shadow: var(--shadow-lg); animation: toastIn 0.3s ease;
+    font-size: 14px; font-weight: 600;
+}
+.toast.success { border-left: 4px solid var(--success); }
+.toast.error { border-left: 4px solid var(--danger); }
+.toast.info { border-left: 4px solid var(--info); }
+@keyframes toastIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+/* ============================================================
+   TOOLTIPS (for charts)
+   ============================================================ */
+.chart-bar-group { position: relative; display: flex; flex-direction: column; align-items: center; }
+.chart-tooltip {
+    display: none; position: absolute; bottom: calc(100% + 8px);
+    left: 50%; transform: translateX(-50%);
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 8px 12px;
+    font-size: 12px; white-space: nowrap; z-index: 100;
+    box-shadow: var(--shadow-lg); pointer-events: none;
+}
+.chart-tooltip::after {
+    content: ''; position: absolute; top: 100%; left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent; border-top-color: var(--border);
+}
+.chart-bar-group:hover .chart-tooltip { display: block; }
+.tt-label { color: var(--text-secondary); font-size: 11px; }
+.tt-value { color: var(--text); font-weight: 700; font-size: 13px; }
+
+/* ============================================================
+   BADGES & STATUS
+   ============================================================ */
+.badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 8px; border-radius: 999px;
+    font-size: 11px; font-weight: 700;
+}
+.badge-success { background: rgba(22,163,74,0.12); color: #16a34a; }
+.badge-warning { background: rgba(245,158,11,0.12); color: #f59e0b; }
+.badge-danger { background: rgba(220,38,38,0.12); color: #dc2626; }
+.badge-info { background: rgba(14,165,233,0.12); color: #0ea5e9; }
+
+/* ============================================================
+   DETAILS / COLLAPSIBLE
+   ============================================================ */
+details.folder { margin-bottom: 10px; }
+details.folder summary {
+    cursor: pointer; padding: 12px 16px; font-weight: 700;
+    background: var(--card-soft); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); list-style: none;
+    display: flex; align-items: center; gap: 8px;
+    transition: background var(--transition);
+}
+details.folder summary:hover { background: var(--card); }
+details.folder summary::-webkit-details-marker { display: none; }
+details.folder .folder-content { padding: 12px; }
+
+/* ============================================================
+   CHART BARS
+   ============================================================ */
+.bar-chart { display: flex; align-items: flex-end; gap: 6px; height: 200px; }
+.bar {
+    width: 100%; border-radius: 4px 4px 0 0;
+    transition: all 0.2s; min-height: 2px; cursor: pointer;
+}
+.bar:hover { filter: brightness(1.2); transform: scaleY(1.03); transform-origin: bottom; }
+
+/* ============================================================
+   RESPONSIVE (Mobile + iPad)
+   ============================================================ */
+@media (max-width: 768px) {
+    .navbar-links {
+        display: none; position: absolute; top: 56px; left: 0; right: 0;
+        background: var(--card); border-bottom: 1px solid var(--border);
+        flex-direction: column; padding: 8px; gap: 4px;
+        box-shadow: var(--shadow-lg); z-index: 99;
+    }
+    .navbar-links.open { display: flex; }
+    .navbar-links a, .navbar-links button {
+        width: 100%; justify-content: center; padding: 10px;
+    }
+    .hamburger { display: flex; }
+
+    .stats-grid { grid-template-columns: repeat(2, 1fr); }
+    .grid-2, .grid-3 { grid-template-columns: 1fr; }
+    .container { padding: 12px; }
+
+    .table-wrapper { overflow-x: auto; }
+    table { min-width: 600px; }
+
+    .modal { width: 95vw; padding: 16px; }
+
+    .header { flex-direction: column; gap: 8px; align-items: stretch; }
+}
+
+@media (max-width: 480px) {
+    .stats-grid { grid-template-columns: 1fr; }
+    .stat-card .value { font-size: 22px; }
+    .navbar-brand { font-size: 15px; }
+}
+nav{background:var(--card);border-bottom:1px solid var(--border);padding:10px 20px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:100;box-shadow:var(--shadow)}
+nav a{color:var(--text-secondary);text-decoration:none;font-weight:600;font-size:14px;padding:6px 12px;border-radius:var(--radius-sm);transition:var(--transition)}
+</style>
+<style>
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+
+    margin: 0;
+
+    background: #f3f4f6;
+
+    color: #111827;
+
+    font-family:
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        Arial,
+        sans-serif;
+}
+
+.header {
+
+    position: sticky;
+
+    top: 0;
+
+    z-index: 100;
+
+    background: white;
+
+    border-bottom:
+        1px solid #e5e7eb;
+
+    padding: 15px 20px;
+
+    display: flex;
+
+    justify-content: space-between;
+
+    align-items: center;
+}
+
+.logo {
+
+    font-size: 21px;
+
+    font-weight: 900;
+}
+
+.container {
+
+    max-width: 1200px;
+
+    margin: auto;
+
+    padding: 20px;
+}
+
+.stats {
+
+    display: grid;
+
+    grid-template-columns:
+        repeat(3, 1fr);
+
+    gap: 15px;
+
+    margin-bottom: 20px;
+}
+
+.stat {
+
+    background: white;
+
+    border-radius: 15px;
+
+    padding: 20px;
+
+    border:
+        1px solid #e5e7eb;
+}
+
+.stat-title {
+
+    color: #6b7280;
+
+    font-size: 14px;
+}
+
+.stat-value {
+
+    font-size: 30px;
+
+    font-weight: 900;
+
+    margin-top: 5px;
+}
+
+.section {
+
+    background: white;
+
+    border-radius: 15px;
+
+    padding: 20px;
+
+    margin-bottom: 20px;
+
+    border:
+        1px solid #e5e7eb;
+}
+
+.section-header {
+
+    display: flex;
+
+    justify-content: space-between;
+
+    align-items: center;
+
+    gap: 10px;
+
+    margin-bottom: 15px;
+}
+
+.section-title {
+
+    font-size: 21px;
+
+    font-weight: 900;
+}
+
+.btn {
+
+    padding: 11px 16px;
+
+    border: none;
+
+    border-radius: 10px;
+
+    font-weight: 800;
+
+    cursor: pointer;
+
+    text-decoration: none;
+
+    display: inline-block;
+}
+
+.btn-primary {
+
+    background: #2563eb;
+
+    color: white;
+}
+
+.btn-success {
+
+    background: #16a34a;
+
+    color: white;
+}
+
+.btn-secondary {
+
+    background: #e5e7eb;
+
+    color: #111827;
+}
+
+.btn-danger {
+
+    background: #dc2626;
+
+    color: white;
+}
+
+.source-grid {
+
+    display: grid;
+
+    grid-template-columns:
+        repeat(2, 1fr);
+
+    gap: 12px;
+}
+
+.source {
+
+    border:
+        2px solid #e5e7eb;
+
+    border-radius: 13px;
+
+    padding: 16px;
+
+    cursor: pointer;
+
+    transition: .15s;
+}
+
+.source:hover {
+
+    border-color: #2563eb;
+
+    transform:
+        translateY(-2px);
+}
+
+.source-name {
+
+    font-size: 18px;
+
+    font-weight: 900;
+}
+
+.source-info {
+
+    margin-top: 7px;
+
+    color: #6b7280;
+
+    line-height: 1.7;
+}
+
+.source-stock {
+
+    margin-top: 10px;
+
+    font-size: 21px;
+
+    font-weight: 900;
+
+    color: #16a34a;
+}
+
+.source-price {
+
+    margin-top: 5px;
+
+    font-weight: 800;
+
+    color: #2563eb;
+}
+
+.product-list {
+
+    display: grid;
+
+    gap: 10px;
+}
+
+.product {
+
+    display: grid;
+
+    grid-template-columns:
+        40px 1fr auto;
+
+    gap: 15px;
+
+    align-items: center;
+
+    background: #f9fafb;
+
+    border:
+        1px solid #e5e7eb;
+
+    border-radius: 12px;
+
+    padding: 15px;
+}
+
+.product-checkbox {
+
+    width: 22px;
+
+    height: 22px;
+}
+
+.barcode {
+
+    font-size: 18px;
+
+    font-weight: 900;
+
+    letter-spacing: .7px;
+}
+
+.product-name {
+
+    font-weight: 800;
+
+    margin-top: 3px;
+}
+
+.product-info {
+
+    color: #6b7280;
+
+    font-size: 14px;
+
+    margin-top: 3px;
+}
+
+.product-price {
+
+    font-size: 19px;
+
+    font-weight: 900;
+
+    color: #16a34a;
+
+    text-align: right;
+}
+
+.sync-toolbar {
+
+    display: flex;
+
+    justify-content: space-between;
+
+    align-items: center;
+
+    gap: 10px;
+
+    padding: 15px;
+
+    margin-bottom: 15px;
+
+    background: #eff6ff;
+
+    border-radius: 12px;
+}
+
+.sync-actions {
+
+    display: flex;
+
+    gap: 8px;
+
+    flex-wrap: wrap;
+}
+
+.empty {
+
+    text-align: center;
+
+    padding: 30px;
+
+    color: #6b7280;
+}
+
+/* =====================================================
+   FOLDERS
+===================================================== */
+
+.folder {
+
+    border:
+        1px solid #e5e7eb;
+
+    border-radius: 13px;
+
+    margin-bottom: 10px;
+
+    overflow: hidden;
+}
+
+.folder summary {
+
+    cursor: pointer;
+
+    padding: 16px;
+
+    font-weight: 900;
+
+    background: #f9fafb;
+
+    list-style: none;
+}
+
+.folder summary::-webkit-details-marker {
+
+    display: none;
+}
+
+.folder-content {
+
+    padding: 15px;
+}
+
+.folder-date {
+
+    color: #6b7280;
+
+    font-size: 14px;
+
+    margin-top: 4px;
+}
+
+.folder-item {
+
+    padding: 10px;
+
+    border-bottom:
+        1px solid #e5e7eb;
+}
+
+.folder-item:last-child {
+
+    border-bottom: none;
+}
+
+/* =====================================================
+   MODAL
+===================================================== */
+
+.modal-bg {
+
+    display: none;
+
+    position: fixed;
+
+    inset: 0;
+
+    background:
+        rgba(0,0,0,.65);
+
+    z-index: 1000;
+
+    align-items: center;
+
+    justify-content: center;
+
+    padding: 15px;
+}
+
+.modal-bg.show {
+
+    display: flex;
+}
+
+.modal {
+
+    width: 100%;
+
+    max-width: 500px;
+
+    background: white;
+
+    border-radius: 18px;
+
+    padding: 22px;
+}
+
+.modal-title {
+
+    font-size: 22px;
+
+    font-weight: 900;
+
+    margin-bottom: 15px;
+}
+
+.modal input {
+
+    width: 100%;
+
+    padding: 15px;
+
+    border:
+        1px solid #d1d5db;
+
+    border-radius: 10px;
+
+    font-size: 20px;
+}
+
+.modal-actions {
+
+    display: flex;
+
+    gap: 10px;
+
+    justify-content: flex-end;
+
+    margin-top: 15px;
+}
+
+.pack-info {
+
+    background: #eff6ff;
+
+    padding: 15px;
+
+    border-radius: 12px;
+
+    margin-bottom: 15px;
+}
+
+.pack-price {
+
+    font-size: 28px;
+
+    font-weight: 900;
+
+    color: #16a34a;
+
+    margin-top: 10px;
+}
+
+@media(max-width:700px) {
+
+    .stats {
+
+        grid-template-columns: 1fr;
+    }
+
+    .source-grid {
+
+        grid-template-columns: 1fr;
+    }
+
+    .product {
+
+        grid-template-columns:
+            35px 1fr;
+    }
+
+    .product-price {
+
+        grid-column:
+            2;
+
+        text-align: left;
+    }
+
+    .sync-toolbar {
+
+        flex-direction: column;
+
+        align-items: stretch;
+    }
+}
+
+
+
+/* ===== DARK MODE + NIIMBOT UI ===== */
+
+:root {
+
+    --bg:#f3f4f6;
+    --card:#fff;
+    --card-soft:#f9fafb;
+    --text:#111827;
+    --muted:#6b7280;
+    --border:#e5e7eb;
+    --input:#fff;
+    --blue-soft:#eff6ff;
+
+}
+
+body.dark-mode {
+
+    --bg:#080d17;
+    --card:#111827;
+    --card-soft:#172235;
+    --text:#f3f4f6;
+    --muted:#9ca3af;
+    --border:#334155;
+    --input:#0f172a;
+    --blue-soft:#172554;
+
+}
+
+body {
+
+    background:var(--bg);
+    color:var(--text);
+    transition:.2s
+
+}
+
+.header,
+.stat,
+.section,
+.source,
+.product,
+.folder,
+.folder summary,
+.modal,
+.pack-info,
+.sync-toolbar {
+
+    background:var(--card);
+    color:var(--text);
+    border-color:var(--border);
+    transition:.2s
+
+}
+
+.source:hover {
+
+    background:var(--card-soft)
+
+}
+
+.product {
+
+    grid-template-columns:
+        40px 1fr auto auto;
+
+    background:var(--card-soft)
+
+}
+
+.product-info,
+.source-info,
+.stat-title,
+.folder-date,
+.empty {
+
+    color:var(--muted)
+
+}
+
+.folder summary {
+
+    background:var(--card-soft)
+
+}
+
+.sync-toolbar,
+.pack-info {
+
+    background:var(--blue-soft)
+
+}
+
+.modal input {
+
+    background:var(--input);
+    color:var(--text);
+    border-color:var(--border)
+
+}
+
+.theme-btn {
+
+    width:44px;
+    height:44px;
+    border:1px solid var(--border);
+    border-radius:10px;
+    background:var(--card);
+    color:var(--text);
+    cursor:pointer;
+    font-size:20px;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center
+
+}
+
+.theme-btn:hover {
+
+    transform:translateY(-1px)
+
+}
+
+.pack-message {
+
+    display:none;
+    margin:0 0 12px;
+    padding:12px 14px;
+    border-radius:10px;
+    font-weight:800;
+    line-height:1.5
+
+}
+
+.pack-message.show {
+
+    display:block
+
+}
+
+.pack-message.success {
+
+    color:#166534;
+    background:#dcfce7;
+    border:1px solid #86efac
+
+}
+
+.pack-message.error {
+
+    color:#991b1b;
+    background:#fee2e2;
+    border:1px solid #fca5a5
+
+}
+
+body.dark-mode .pack-message.success {
+
+    color:#bbf7d0;
+    background:#14532d;
+    border-color:#166534
+
+}
+
+body.dark-mode .pack-message.error {
+
+    color:#fecaca;
+    background:#450a0a;
+    border-color:#991b1b
+
+}
+
+.barcode-preview {
+
+    margin:0 0 15px;
+    padding:14px;
+    border:1px solid var(--border);
+    border-radius:12px;
+    background:var(--card-soft);
+    text-align:center
+
+}
+
+.barcode-preview-label {
+
+    font-size:12px;
+    color:var(--muted);
+    margin-bottom:5px
+
+}
+
+.barcode-preview-value {
+
+    font-size:25px;
+    font-weight:900;
+    letter-spacing:1px;
+    color:var(--text)
+
+}
+
+.btn-niimbot {
+
+    background:#7c3aed;
+    color:#fff;
+    white-space:nowrap
+
+}
+
+.btn-niimbot:hover {
+
+    background:#6d28d9
+
+}
+
+.btn-niimbot:disabled {
+
+    opacity:.55;
+    cursor:not-allowed
+
+}
+
+
+/* ===== PACKING STATUS ===== */
+
+#packButton:disabled {
+
+    opacity:.65;
+    cursor:not-allowed;
+
+}
+
+#packButton.packing {
+
+    background:#f59e0b;
+    color:white;
+
+}
+
+#packButton.success {
+
+    background:#16a34a;
+    color:white;
+
+}
+
+
+/* ===== NEW PACKED ITEM ANIMATION ===== */
+
+@keyframes slideInPending {
+
+    from { opacity:0; transform:translateY(-10px); }
+
+    to   { opacity:1; transform:translateY(0); }
+
+}
+
+.product.new-packed {
+
+    animation: slideInPending 0.35s ease;
+
+    border-left: 3px solid var(--success);
+
+}
+
+
+@media(max-width:700px) {
+
+    .product {
+
+        grid-template-columns:35px 1fr
+
+    }
+
+    .product-price {
+
+        grid-column:2;
+        text-align:left
+
+    }
+
+    .product .btn-niimbot {
+
+        grid-column:2;
+        width:100%
+
+    }
+
+    .barcode-preview-value {
+
+        font-size:21px
+
+    }
+
+}
+
+
+/* =====================================================
+   PRICE / PROMOTION MANAGER
+===================================================== */
+
+.price-manager {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.price-help,
+.bulk-price-help {
+    padding: 13px 15px;
+    border-radius: 12px;
+    background: var(--blue-soft);
+    color: var(--text);
+    line-height: 1.65;
+}
+
+.price-filters,
+.bulk-price-toolbar,
+.price-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.price-filter-input {
+    min-height: 44px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--input);
+    color: var(--text);
+    font-size: 15px;
+}
+
+.price-filters .price-filter-input:first-child {
+    flex: 1 1 280px;
+}
+
+.bulk-price-toolbar {
+    justify-content: space-between;
+    padding: 13px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--card-soft);
+}
+
+.bulk-price-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.bulk-price-controls .price-filter-input:first-child {
+    min-width: 270px;
+}
+
+.price-product-list {
+    display: grid;
+    gap: 8px;
+}
+
+.price-product {
+    display: grid;
+    grid-template-columns: 28px 1fr auto;
+    gap: 12px;
+    align-items: center;
+    padding: 13px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--card-soft);
+}
+
+.price-product.hidden {
+    display: none;
+}
+
+.price-checkbox {
+    width: 21px;
+    height: 21px;
+}
+
+.price-product-title {
+    font-weight: 900;
+    font-size: 16px;
+}
+
+.price-product-meta {
+    margin-top: 5px;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+.price-product-meta strong {
+    color: var(--text);
+}
+
+.price-current {
+    color: #16a34a !important;
+    font-size: 17px;
+}
+
+.price-product-note {
+    margin-top: 4px;
+    color: var(--muted);
+    font-size: 11px;
+}
+
+.status-badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 3px 7px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 900;
+}
+
+.status-synced {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.status-pending {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+@media(max-width:700px) {
+
+    .bulk-price-toolbar,
+    .bulk-price-controls {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .bulk-price-controls .price-filter-input,
+    .bulk-price-controls .btn {
+        width: 100%;
+    }
+
+    .price-product {
+        grid-template-columns: 28px 1fr;
+    }
+
+    .price-product-actions {
+        grid-column: 2;
+    }
+
+    .price-product-actions .btn {
+        width: 100%;
+    }
+
+}
+
+</style>
+
+
+    <style>
+
+/* ============================================================
+   DARK MODE SUPPORT
+   ============================================================ */
+:root {
+    --bg: #f3f4f6;
+    --card: #ffffff;
+    --card-soft: #f9fafb;
+    --text: #111827;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --input: #ffffff;
+    --blue-soft: #eff6ff;
+}
+
+body.dark-mode, html.dark-mode body {
+    --bg: #0f172a;
+    --card: #1e293b;
+    --card-soft: #172235;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --border: #334155;
+    --input: #0f172a;
+    --blue-soft: #172554;
+    background: var(--bg);
+    color: var(--text);
+}
+
+body.dark-mode .header,
+body.dark-mode .card,
+body.dark-mode .stat,
+body.dark-mode .section,
+body.dark-mode .source,
+body.dark-mode .product,
+body.dark-mode .folder,
+body.dark-mode .folder summary,
+body.dark-mode .modal,
+body.dark-mode .pack-info,
+body.dark-mode .sync-toolbar,
+body.dark-mode .stat-card,
+body.dark-mode .table-wrapper,
+body.dark-mode .card,
+body.dark-mode .calc-box {
+    background: var(--card);
+    color: var(--text);
+    border-color: var(--border);
+}
+
+body.dark-mode .product-info,
+body.dark-mode .source-info,
+body.dark-mode .stat-title,
+body.dark-mode .folder-date,
+body.dark-mode .empty,
+body.dark-mode .empty-state {
+    color: var(--muted);
+}
+
+body.dark-mode .form-control,
+body.dark-mode input,
+body.dark-mode select,
+body.dark-mode textarea {
+    background: var(--input);
+    color: var(--text);
+    border-color: var(--border);
+}
+
+body.dark-mode .sync-toolbar,
+body.dark-mode .pack-info,
+body.dark-mode .calc-box {
+    background: var(--blue-soft);
+}
+
+body.dark-mode .modal input,
+body.dark-mode .modal select,
+body.dark-mode .modal textarea {
+    background: var(--input);
+    color: var(--text);
+    border-color: var(--border);
+}
+
+body.dark-mode thead th {
+    background: #0f172a;
+    color: #64748b;
+}
+
+body.dark-mode tbody td {
+    border-top-color: var(--border);
+    color: var(--text);
+}
+
+body.dark-mode tbody tr:hover {
+    background: rgba(56, 189, 248, 0.05);
+}
+
+/* Theme toggle button */
+.theme-btn {
+    width: 44px;
+    height: 44px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--card);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.theme-btn:hover {
+    transform: translateY(-1px);
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media(max-width: 768px) {
+    .header {
+        flex-direction: column;
+        gap: 12px;
+        align-items: stretch;
+    }
+
+    .header-actions {
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr) !important;
+    }
+
+    .grid-2, .grid-3 {
+        grid-template-columns: 1fr !important;
+    }
+
+    .parts-grid {
+        grid-template-columns: 1fr !important;
+    }
+
+    .bar-chart {
+        height: 150px !important;
+    }
+
+    .bar {
+        width: 12px !important;
+    }
+
+    .bar-label {
+        font-size: 8px !important;
+    }
+
+    table {
+        font-size: 12px;
+    }
+
+    thead th, tbody td {
+        padding: 8px 10px;
+    }
+
+    .modal {
+        width: 95vw !important;
+        padding: 16px !important;
+    }
+
+    .calc-row {
+        flex-direction: column;
+    }
+
+    .filter-bar {
+        flex-direction: column;
+    }
+
+    .section-header {
+        flex-direction: column;
+        gap: 8px;
+    }
+}
+
+@media(max-width: 480px) {
+    .stats-grid {
+        grid-template-columns: 1fr !important;
+    }
+
+    .header h1 {
+        font-size: 18px !important;
+    }
+
+    .stat-card .value {
+        font-size: 22px !important;
+    }
+}
+
+    </style>
+{% endblock %}
+{% block content %}
+
+
+<main class="container">
+
+<!-- =====================================================
+     STATS
+===================================================== -->
+
+<div class="stats">
+
+ 
+<div class="stat">
+
+    <div class="stat-title">
+
+        🟡 รอขึ้น Loyverse
+
+    </div>
+
+    <div class="stat-value">
+
+        {{ pending_count }}
+
+    </div>
+
+</div>
+
+
+<div class="stat">
+
+    <div class="stat-title">
+
+        🟢 Sync แล้ว
+
+    </div>
+
+    <div class="stat-value">
+
+        {{ synced_count }}
+
+    </div>
+
+</div>
+
+
+<div class="stat">
+
+    <div class="stat-title">
+
+        📦 Product Info
+
+    </div>
+
+    <div class="stat-value">
+
+        {{ source_products|length }}
+
+    </div>
+
+</div>
+ 
+
+</div>
+
+<!-- =====================================================
+     PRODUCT INFO / STOCK
+===================================================== -->
+
+<section class="section">
+
+<details class="folder" style="margin-bottom:10px">
+<summary style="cursor:pointer;padding:12px 16px;font-weight:700;background:var(--card-soft);border:1px solid var(--border);border-radius:8px;list-style:none;display:flex;align-items:center;gap:8px">
+    <span style="font-size:14px">📦 วัตถุดิบที่มี Stock</span>
+    <span style="background:var(--accent);color:#fff;font-size:11px;padding:2px 8px;border-radius:999px;margin-left:auto">{{ source_products|length }}</span>
+</summary>
+
+<div class="source-grid" style="padding:12px">
+
+    {% for source in source_products %}
+
+    <div
+        class="source"
+        id="source-card-{{ source.id }}"
+        data-product-id="{{ source.id }}"
+        onclick="openPackModal(
+            {{ source.id }}
+        )"
+    >
+
+        <div class="source-name">
+
+            {{ source.name.name }}
+
+        </div>
+
+
+        <div class="source-info">
+
+            ร้าน:
+            {{ source.import_from.name_place }}
+
+            <br>
+
+            Lot:
+            {{ source.lot_number }}
+
+            <br>
+
+            ต้นทุน:
+            {{ source.cost|default:0 }}
+            บาท/kg
+
+        </div>
+
+
+        <div class="source-stock" id="source-stock-{{ source.id }}">
+
+            {{ source.weight|floatformat:2 }}
+            g
+
+        </div>
+
+
+        <div class="source-price">
+
+            ขาย
+            {{ source.selling_price_per_kg }}
+            บาท/kg
+
+            <br>
+
+            กำไร
+            {{ source.profit_percent|floatformat:2 }}%
+
+        </div>
+
+    </div>
+
+    {% empty %}
+
+    <div class="empty">
+
+        ไม่มี Product Info ที่มี Stock    </div>
+
+    {% endfor %}
+
+</div>
+
+</details>
+
+</section>
+
+<!-- =====================================================
+     PENDING LOYVERSE
+===================================================== -->
+
+<section class="section">
+
+ 
+<div class="section-header">
+
+    <div class="section-title">
+
+        🟡 สินค้าที่แพ็คแล้ว / รอ Sync
+
+    </div>
+
+</div>
+
+
+<form
+    id="syncForm"
+>
+
+    {% csrf_token %}
+
+
+    <div class="sync-toolbar">
+
+        <div>
+
+            เลือกแล้ว
+
+            <strong id="selectedCount">
+                0
+            </strong>
+
+            รายการ
+
+        </div>
+
+
+        <div class="sync-actions">
+
+            <button
+                type="button"
+                class="btn btn-secondary"
+                onclick="selectAll()"
+            >
+
+                ☑ เลือกทั้งหมด
+
+            </button>
+
+
+            <button
+                type="button"
+                class="btn btn-secondary"
+                onclick="clearSelection()"
+            >
+
+                ☐ ยกเลิกทั้งหมด
+
+            </button>
+
+
+            <a
+                href="{% url 'export_loyverse_csv' %}"
+                class="btn btn-primary"
+            >
+
+                📥 Export CSV
+
+            </a>
+
+
+            <button
+                type="button"
+                class="btn btn-success"
+                onclick="confirmSync()"
+            >
+
+                ✅ ยืนยันว่าเข้า Loyverse แล้ว
+
+            </button>
+
+        </div>
+
+    </div>
+
+
+    <div class="product-list" id="pendingProductList">
+
+        {% for item in pending_products %}
+
+        <label class="product">
+
+            <input
+                type="checkbox"
+                class="product-checkbox"
+                name="product_ids"
+                value="{{ item.id }}"
+                onchange="updateSelectedCount()"
+            >
+
+
+            <div>
+
+                <div class="barcode">
+
+                    {{ item.barcode }}
+
+                </div>
+
+                <div class="product-name">
+
+                    {{ item.product.name.name }}
+
+                    {{ item.weight|floatformat:0 }}
+                    กรัม
+
+                </div>
+
+                <div class="product-info">
+
+                    SKU:
+                    {{ item.loyverse_sku }}
+
+                    <br>
+
+                    MFG:
+                    {{ item.mfg|date:"d/m/Y H:i" }}
+
+                </div>
+
+            </div>
+
+
+            <div class="product-price">
+
+                ฿{{ item.selling_price|floatformat:0 }}
+
+            </div>
+
+
+            <!-- ปุ่มพิมพ์ -->
+
+            <button
+                type="button"
+                class="print-niimbot-btn"
+                onclick="printNIIMBOT({{ item.id }}, this)"
+            >
+
+                🖨️ พิมพ์ NIIMBOT
+
+            </button>
+
+        </label>
+
+        {% empty %}
+
+        <div class="empty" id="pendingEmptyState">
+
+            🎉 ไม่มีสินค้ารอ Sync
+
+            <br>
+
+            สินค้าที่แพ็คใหม่จะปรากฏที่นี่
+
+        </div>
+
+        {% endfor %}
+
+    </div>
+
+</form>
+ 
+
+</section>
+
+
+<!-- =====================================================
+     PRICE / PROMOTION MANAGEMENT
+===================================================== -->
+
+<section class="section">
+
+<details class="folder" style="margin-bottom:15px;">
+
+    <summary>
+
+        💰 จัดโปร / แก้ราคาสินค้าที่แพ็คแล้ว
+
+    </summary>
+
+    <div class="folder-content">
+
+    <div class="price-manager">
+
+        <div class="price-help">
+            <strong>ใช้ได้ทั้งรายการที่ Sync Loyverse แล้วและยังไม่ Sync</strong>
+            <br>
+            ระบบจะใช้ <strong>ต้นทุนปัจจุบันของ Lot</strong> และ
+            <strong>น้ำหนักของแต่ละแพ็ค</strong> ในการคำนวณราคา
+            ดังนั้นถ้าแก้ต้นทุนของหมูบดแล้ว สามารถเลือกทั้งล็อตแล้วคำนวณใหม่ได้ทันที
+        </div>
+
+        <div class="price-filters">
+
+            <input
+                type="text"
+                id="priceSearch"
+                class="price-filter-input"
+                placeholder="🔎 ค้นหา เช่น หมูบดเกรด A / Barcode"
+                oninput="filterPriceProducts()"
+            >
+
+            <select
+                id="priceStatusFilter"
+                class="price-filter-input"
+                onchange="filterPriceProducts()"
+            >
+                <option value="all">ทุกสถานะ</option>
+                <option value="synced">Sync แล้ว</option>
+                <option value="pending">รอ Sync</option>
+            </select>
+
+            <input
+                type="number"
+                id="priceLotFilter"
+                class="price-filter-input"
+                min="1"
+                placeholder="Lot เช่น 1"
+                oninput="filterPriceProducts()"
+            >
+
+        </div>
+
+        <div class="bulk-price-toolbar">
+
+            <div>
+                <strong>
+                    เลือก
+                    <span id="priceSelectedCount">0</span>
+                    รายการ
+                </strong>
+            </div>
+
+            <div class="bulk-price-controls">
+
+                <select
+                    id="bulkPriceMode"
+                    class="price-filter-input"
+                    onchange="updateBulkPriceHelp()"
+                >
+                    <option value="cost_margin">
+                        🧮 คิดจากต้นทุนปัจจุบัน + กำไร %
+                    </option>
+                    <option value="discount">
+                        🔻 ลดจากราคาขายปัจจุบัน %
+                    </option>
+                    <option value="price_per_kg">
+                        💵 กำหนดราคาขายใหม่ บาท/kg
+                    </option>
+                </select>
+
+                <input
+                    type="number"
+                    id="bulkPriceValue"
+                    class="price-filter-input"
+                    step="0.01"
+                    value="5"
+                    min="-100"
+                    placeholder="ค่า"
+                    oninput="updateBulkPriceHelp()"
+                >
+
+                <button
+                    type="button"
+                    class="btn btn-success"
+                    onclick="applyBulkPrice()"
+                >
+                    💾 ใช้ราคากับรายการที่เลือก
+                </button>
+
+                <button
+                    type="button"
+                    class="btn btn-danger"
+                    onclick="undoBulkPrice()"
+                >
+                    ↩️ Undo ราคาล่าสุด
+                </button>
+
+            </div>
+
+        </div>
+
+        <div
+            id="bulkPriceHelp"
+            class="bulk-price-help"
+        >
+            ต้นทุน 82 บาท/kg + กำไร 5%
+            → ราคาขายแต่ละแพ็คจะคำนวณจากน้ำหนักจริง
+        </div>
+
+        <div class="price-actions">
+
+            <button
+                type="button"
+                class="btn btn-secondary"
+                onclick="selectVisiblePrices()"
+            >
+                ☑ เลือกที่แสดง
+            </button>
+
+            <button
+                type="button"
+                class="btn btn-secondary"
+                onclick="clearPriceSelection()"
+            >
+                ☐ ยกเลิก
+            </button>
+
+            <button
+                type="button"
+                class="btn btn-primary"
+                onclick="exportSelectedPrices()"
+            >
+                📥 Export CSV รายการที่เลือก
+            </button>
+
+            <a
+                href="{% url 'export_loyverse_csv' %}?scope=synced"
+                class="btn btn-secondary"
+            >
+                📥 Export CSV ที่ Sync แล้ว
+            </a>
+
+            <a
+                href="{% url 'export_loyverse_csv' %}?scope=all"
+                class="btn btn-secondary"
+            >
+                📥 Export CSV ทั้งหมด
+            </a>
+
+        </div>
+
+        <div
+            id="priceBulkMessage"
+            class="pack-message"
+            role="status"
+            aria-live="polite"
+        ></div>
+
+        <div class="price-product-list">
+
+            {% for item in price_products %}
+
+            <div
+                class="price-product"
+                data-name="{{ item.product.name.name|default:''|lower }}"
+                data-barcode="{{ item.barcode|lower }}"
+                data-sku="{{ item.loyverse_sku|default:''|lower }}"
+                data-status="{% if item.loyverse_synced %}synced{% else %}pending{% endif %}"
+                data-lot="{{ item.product.lot_number|default:'' }}"
+            >
+
+                <input
+                    type="checkbox"
+                    class="price-checkbox"
+                    value="{{ item.id }}"
+                    onchange="updatePriceSelectedCount()"
+                >
+
+                <div class="price-product-main">
+
+                    <div class="price-product-title">
+
+                        {{ item.product.name.name }}
+
+                        <span class="status-badge {% if item.loyverse_synced %}status-synced{% else %}status-pending{% endif %}">
+                            {% if item.loyverse_synced %}
+                                🟢 Sync แล้ว
+                            {% else %}
+                                🟡 รอ Sync
+                            {% endif %}
+                        </span>
+
+                    </div>
+
+                    <div class="price-product-meta">
+
+                        Barcode:
+                        <strong>{{ item.barcode }}</strong>
+
+                        ·
+
+                        น้ำหนัก:
+                        <strong>{{ item.weight|floatformat:0 }} g</strong>
+
+                        ·
+
+                        Lot:
+                        <strong>{{ item.product.lot_number }}</strong>
+
+                        ·
+
+                        SKU:
+                        {{ item.loyverse_sku }}
+
+                    </div>
+
+                    <div class="price-product-meta">
+
+                        ต้นทุนปัจจุบัน:
+                        <strong>
+                            {{ item.product.cost|default:0|floatformat:2 }} บาท/kg
+                        </strong>
+
+                        ·
+
+                        ราคาขาย:
+                        <strong class="price-current">
+                            ฿{{ item.selling_price|floatformat:0 }}
+                        </strong>
+
+                    </div>
+
+                    <div class="price-product-note">
+                        * ต้นทุนแพ็คคำนวณจาก ต้นทุน/kg × น้ำหนัก/1,000
+                    </div>
+
+                </div>
+
+                <div class="price-product-actions">
+
+                    <button
+                        type="button"
+                        class="btn btn-niimbot"
+                        onclick="printNIIMBOT({{ item.id }}, this)"
+                    >
+                        🖨️ พิมพ์ NIIMBOT
+                    </button>
+
+                </div>
+
+            </div>
+
+            {% empty %}
+
+            <div class="empty">
+                ไม่มีรายการสินค้า
+            </div>
+
+            {% endfor %}
+
+        </div>
+
+    </div>
+
+    </div>
+
+</details>
+
+</section>
+
+<!-- =====================================================
+     SYNC HISTORY
+===================================================== -->
+
+<section class="section">
+
+ 
+<div class="section-header">
+
+    <div class="section-title">
+
+        📁 ประวัติการ Sync Loyverse
+
+    </div>
+
+</div>
+
+
+{% for batch in sync_batches %}
+
+<details class="folder">
+
+    <summary>
+
+        📁 Sync #{{ batch.id }}
+
+        <div class="folder-date">
+
+            ยืนยันเมื่อ
+            {{ batch.confirmed_at|date:"d/m/Y H:i" }}
+
+            ·
+
+            {{ batch.item_count }}
+            รายการ
+
+        </div>
+
+    </summary>
+
+
+    <div class="folder-content">
+
+        {% for item in batch.products.all %}
+
+        <div class="folder-item">
+
+            <strong>
+
+                {{ item.barcode }}
+
+            </strong>
+
+            -
+
+            {{ item.product.name.name }}
+
+            {{ item.weight|floatformat:0 }}
+            กรัม
+
+            <br>
+
+            SKU:
+            {{ item.loyverse_sku }}
+
+            ·
+
+            ฿{{ item.selling_price|floatformat:0 }}
+
+        </div>
+
+        {% empty %}
+
+        <div class="empty">
+
+            ไม่มีข้อมูล
+
+        </div>
+
+        {% endfor %}
+
+    </div>
+
+</details>
+
+{% empty %}
+
+<div class="empty">
+
+    ยังไม่มีประวัติการ Sync
+
+</div>
+
+{% endfor %}
+ 
+
+</section>
+
+</main>
+
+<!-- =====================================================
+     PACK MODAL
+===================================================== -->
+
+<div
+    class="modal-bg"
+    id="packModal"
+    onclick="if(event.target===this)closePackModal()"
+>
+
+ 
+<div class="modal">
+
+    <div class="modal-title">
+
+        🏷️ แพ็คสินค้า
+
+    </div>
+
+
+    <div
+        class="pack-info"
+        id="packInfo"
+    >
+
+        กำลังโหลด...
+
+    </div>
+
+
+    <div class="barcode-preview">
+
+        <div class="barcode-preview-label">
+
+            Barcode ที่จะพิมพ์
+
+        </div>
+
+        <div
+            id="barcodePreview"
+            class="barcode-preview-value"
+        >
+
+            -
+
+        </div>
+
+    </div>
+
+
+    <div
+        id="packMessage"
+        class="pack-message"
+        role="status"
+        aria-live="polite"
+    ></div>
+
+
+    <label>
+
+        น้ำหนักที่ต้องการแพ็ค (กรัม)
+
+    </label>
+
+
+    <input
+        type="number"
+        id="packWeight"
+        step="0.01"
+        min="0.01"
+        placeholder="เช่น 205"
+    >
+
+
+    <div
+        class="pack-price"
+        id="packPrice"
+    >
+
+        ฿0
+
+    </div>
+
+
+    <div class="modal-actions">
+
+        <button
+            type="button"
+            class="btn btn-secondary"
+            onclick="closePackModal()"
+        >
+
+            ยกเลิก
+
+        </button>
+
+
+        <button
+            type="button"
+            id="packButton"
+            class="btn btn-success"
+            onclick="packProduct()"
+        >
+
+            🏷️ แพ็คสินค้า
+
+        </button>
+
+    </div>
+
+</div>
+ 
+
+</div>
+
+<script>
+
+
+let selectedProductId = null;
+
+let sellingPricePerKg = 0;
+
+let remainingStock = 0;
+
+
+/* =====================================================
+   CSRF
+===================================================== */
+
+async function printNIIMBOT(productId, button) {
+
+    // ป้องกันการกดซ้ำ
+
+    if (button.disabled) {
+
+        return;
+
+    }
+
+
+    const originalText =
+        button.textContent;
+
+
+    button.disabled = true;
+
+    button.textContent =
+        "⏳ กำลังพิมพ์...";
+
+
+    try {
+
+        const response = await fetch(
+            "/api/print-niimbot/",
+            {
+                method: "POST",
+
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRFToken":
+                        getCookie("csrftoken")
+                },
+
+                body: JSON.stringify({
+                    product_id: productId
+                })
+            }
+        );
+
+
+        const data =
+            await response.json();
+
+
+        if (data.success) {
+
+            button.textContent =
+                "✅ พิมพ์แล้ว";
+
+
+            setTimeout(() => {
+
+                button.textContent =
+                    originalText;
+
+                button.disabled =
+                    false;
+
+            }, 2000);
+
+        } else {
+
+            alert(
+                "พิมพ์ไม่สำเร็จ\n" +
+                (data.error ||
+                    "ไม่ทราบสาเหตุ")
+            );
+
+
+            button.textContent =
+                originalText;
+
+            button.disabled =
+                false;
+
+        }
+
+
+    } catch (error) {
+
+        console.error(error);
+
+
+        alert(
+            "ไม่สามารถเชื่อมต่อ Django ได้"
+        );
+
+
+        button.textContent =
+            originalText;
+
+        button.disabled =
+            false;
+
+    }
+
+}
+
+
+function getCookie(name) {
+
+    let cookieValue = null;
+
+
+    if (
+        document.cookie &&
+        document.cookie !== ''
+    ) {
+
+        const cookies =
+            document.cookie.split(';');
+
+
+        for (
+            let cookie of cookies
+        ) {
+
+            cookie =
+                cookie.trim();
+
+
+            if (
+                cookie.substring(
+                    0,
+                    name.length + 1
+                )
+                ===
+                (name + '=')
+            ) {
+
+                cookieValue =
+                    decodeURIComponent(
+                        cookie.substring(
+                            name.length + 1
+                        )
+                    );
+
+                break;
+
+            }
+
+        }
+
+    }
+
+
+    return cookieValue;
+
+}
+
+
+const csrftoken =
+    getCookie('csrftoken');
+
+
+/* =====================================================
+   PACK MESSAGE
+===================================================== */
+
+function showPackMessage(
+    message,
+    type = 'success'
+) {
+
+    const box =
+        document.getElementById(
+            'packMessage'
+        );
+
+
+    if (!box) return;
+
+
+    box.textContent =
+        message;
+
+
+    box.className =
+        `pack-message show ${type}`;
+
+}
+
+
+function clearPackMessage() {
+
+    const box =
+        document.getElementById(
+            'packMessage'
+        );
+
+
+    if (!box) return;
+
+
+    box.textContent = '';
+
+    box.className =
+        'pack-message';
+
+}
+
+
+/* =====================================================
+   PACK MODAL
+===================================================== */
+
+function openPackModal(
+    productId
+) {
+
+    selectedProductId =
+        productId;
+
+
+    const modal =
+        document.getElementById(
+            'packModal'
+        );
+
+
+    modal.classList.add('show');
+
+
+    clearPackMessage();
+
+
+    document
+        .getElementById(
+            'barcodePreview'
+        )
+        .textContent = '-';
+
+
+    document
+        .getElementById(
+            'packInfo'
+        )
+        .innerHTML =
+            'กำลังโหลด...';
+
+
+    // Reset input
+
+    const weightInput =
+        document.getElementById(
+            'packWeight'
+        );
+
+    weightInput.disabled =
+        false;
+
+    weightInput.value = '';
+
+
+    // Reset button
+
+    const packButton =
+        document.getElementById(
+            'packButton'
+        );
+
+    packButton.disabled =
+        false;
+
+    packButton.classList.remove(
+        'packing',
+        'success'
+    );
+
+    packButton.innerHTML =
+        '🏷️ แพ็คสินค้า';
+
+
+    fetch(
+        `/api/next-barcode/${productId}/`
+    )
+
+    .then(
+        response =>
+            response.json()
+    )
+
+    .then(
+        data => {
+
+            if (!data.success) {
+
+                showGlobalMessage(
+                    data.message ||
+                    'ไม่สามารถสร้าง Barcode ได้',
+                    'error'
+                );
+
+
+                closePackModal();
+
+
+                return;
+
+            }
+
+
+            sellingPricePerKg =
+                data.selling_price_per_kg;
+
+
+            remainingStock =
+                data.remaining_stock;
+
+
+            document
+                .getElementById(
+                    'packInfo'
+                )
+                .innerHTML = `
+
+                    <strong>
+                        ${data.product_name}
+                    </strong>
+
+                    <br>
+
+                    ร้าน:
+                    ${data.import_from}
+
+                    <br>
+
+                    Lot:
+                    ${data.lot_number}
+
+                    <br>
+
+                    Barcode ถัดไป:
+                    <strong>
+                        ${data.barcode}
+                    </strong>
+
+                    <br>
+
+                    Stock:
+                    ${data.remaining_stock}
+                    g
+
+                    <br>
+
+                    ราคาขาย:
+                    ${data.selling_price_per_kg}
+                    บาท/kg
+
+                    <br>
+
+                    กำไร:
+                    ${data.profit_percent.toFixed(2)}%
+
+                `;
+
+
+            document
+                .getElementById(
+                    'barcodePreview'
+                )
+                .textContent =
+                    data.barcode || '-';
+
+
+            weightInput.value = '';
+
+            updatePackPrice();
+
+
+            // Focus ช่องน้ำหนักทันที
+
+            setTimeout(() => {
+
+                weightInput.focus();
+
+            }, 50);
+
+        }
+    );
+
+}
+
+
+function closePackModal() {
+
+    document
+        .getElementById(
+            'packModal'
+        )
+        .classList.remove('show');
+
+
+    clearPackMessage();
+
+
+    const barcodePreview =
+        document.getElementById(
+            'barcodePreview'
+        );
+
+
+    if (barcodePreview) {
+
+        barcodePreview.textContent =
+            '-';
+
+    }
+
+
+    selectedProductId =
+        null;
+
+}
+
+
+/* =====================================================
+   PRICE CALCULATION
+===================================================== */
+
+document
+    .getElementById(
+        'packWeight'
+    )
+    .addEventListener(
+        'input',
+        updatePackPrice
+    );
+
+
+/*
+    กด ENTER เพื่อแพ็ค
+*/
+
+document
+    .getElementById(
+        'packWeight'
+    )
+    .addEventListener(
+        'keydown',
+        function(event) {
+
+            if (event.key === 'Enter') {
+
+                event.preventDefault();
+
+                packProduct();
+
+            }
+
+        }
+    );
+
+
+function updatePackPrice() {
+
+    const weight =
+        parseFloat(
+            document
+                .getElementById(
+                    'packWeight'
+                )
+                .value
+        ) || 0;
+
+
+    const price =
+        Math.ceil(
+            (
+                weight / 1000
+            )
+            *
+            sellingPricePerKg
+        );
+
+
+    document
+        .getElementById(
+            'packPrice'
+        )
+        .textContent =
+            `฿${price}`;
+
+}
+
+
+/* =====================================================
+   FETCH NEXT BARCODE (for re-packing)
+===================================================== */
+
+function fetchNextBarcode(productId, packButton, weightInput) {
+
+    packButton.disabled = true;
+
+    packButton.classList.remove('success');
+
+    packButton.classList.add('packing');
+
+    packButton.innerHTML = '⏳ กำลังเตรียม...';
+
+
+    fetch(`/api/next-barcode/${productId}/`)
+
+    .then(response => response.json())
+
+    .then(data => {
+
+        if (!data.success) {
+
+            showPackMessage(
+                data.message || 'ไม่พบสินค้า',
+                'error'
+            );
+
+            packButton.disabled = false;
+
+            packButton.classList.remove('packing');
+
+            packButton.innerHTML = '🏷️ แพ็คสินค้า';
+
+            return;
+
+        }
+
+
+        sellingPricePerKg = data.selling_price_per_kg;
+
+        remainingStock = data.remaining_stock;
+
+
+        document.getElementById('packInfo').innerHTML = `
+
+            <strong>${data.product_name}</strong>
+
+            <br>ร้าน: ${data.import_from}
+
+            <br>Lot: ${data.lot_number}
+
+            <br>Barcode ถัดไป: <strong>${data.barcode}</strong>
+
+            <br>Stock: ${remainingStock} g
+
+            <br>ราคาขาย: ${data.selling_price_per_kg} บาท/kg
+
+            <br>กำไร: ${data.profit_percent != null ? data.profit_percent.toFixed(2) + '%' : '—'}
+
+        `;
+
+
+        document.getElementById('barcodePreview').textContent = data.barcode || '-';
+
+
+        packButton.classList.remove('packing');
+
+        packButton.innerHTML = '🏷️ แพ็คสินค้า';
+
+        packButton.disabled = false;
+
+
+        weightInput.value = '';
+
+        updatePackPrice();
+
+        weightInput.focus();
+
+
+        /*  อัปเดต stock บน source card ถ้าเหลือ 0 ให้ hide  */
+
+        var sourceStockEl = document.getElementById('source-stock-' + data.product_id);
+
+        if (sourceStockEl) {
+
+            sourceStockEl.innerHTML = remainingStock.toFixed(2) + ' g';
+
+        }
+
+
+        /*  ถ้า stock หมด ให้แสดงข้อความ + dim source card  */
+
+        if (remainingStock <= 0) {
+
+            showPackMessage('⚠️ Stock หมดแล้ว — ไม่สามารถแพ็คเพิ่มได้', 'error');
+
+            weightInput.disabled = true;
+
+            packButton.disabled = true;
+
+            var card = document.getElementById('source-card-' + data.product_id);
+
+            if (card) {
+
+                card.style.opacity = '0.4';
+
+                card.style.pointerEvents = 'none';
+
+            }
+
+        }
+
+    })
+
+    .catch(error => {
+
+        console.error(error);
+
+        packButton.disabled = false;
+
+        packButton.classList.remove('packing');
+
+        packButton.innerHTML = '🏷️ แพ็คสินค้า';
+
+    });
+
+}
+
+
+/* =====================================================
+   APPEND PACKED ITEM TO PENDING LIST (real-time)
+===================================================== */
+
+function appendPendingProduct(data) {
+
+    var list = document.getElementById('pendingProductList');
+
+    if (!list) return;
+
+
+    /*  ลบ empty state ถ้ามี  */
+
+    var emptyEl = document.getElementById('pendingEmptyState');
+
+    if (emptyEl) emptyEl.remove();
+
+
+    var label = document.createElement('label');
+
+    label.className = 'product new-packed';
+
+
+    label.innerHTML = `
+
+        <input type="checkbox" class="product-checkbox" name="product_ids" value="${data.id}" onchange="updateSelectedCount()">
+
+        <div>
+
+            <div class="barcode">${data.barcode}</div>
+
+            <div class="product-name">${data.product_name} ${data.weight} กรัม</div>
+
+            <div class="product-info">SKU: ${data.loyverse_sku}<br>MFG: ${data.mfg}</div>
+
+        </div>
+
+        <div class="product-price">฿${Math.round(data.selling_price)}</div>
+
+        <button type="button" class="print-niimbot-btn" onclick="printNIIMBOT(${data.id}, this)">🖨️ พิมพ์ NIIMBOT</button>
+
+    `;
+
+
+    list.insertBefore(label, list.firstChild);
+
+}
+
+
+/* =====================================================
+   UPDATE PENDING COUNT
+===================================================== */
+
+function updatePendingCount(delta) {
+
+    var el = document.getElementById('selectedCount');
+
+    /*  ไม่ต้องแก้ selectedCount เพราะมันเป็นจำนวนที่เลือก  */
+
+    /*  อัปเดต pending_count stat card  */
+
+    var statCards = document.querySelectorAll('.stat-value');
+
+    if (statCards.length > 0) {
+
+        var pendingStatEl = statCards[0];
+
+        var current = parseInt(pendingStatEl.textContent) || 0;
+
+        pendingStatEl.textContent = current + delta;
+
+    }
+
+}
+
+
+/* =====================================================
+   PACK
+===================================================== */
+
+function packProduct() {
+
+    if (!selectedProductId) {
+
+        return;
+
+    }
+
+
+    const weightInput =
+        document.getElementById(
+            'packWeight'
+        );
+
+
+    const packButton =
+        document.getElementById(
+            'packButton'
+        );
+
+
+    const weight =
+        parseFloat(
+            weightInput.value
+        );
+
+
+    /* ==========================================
+       ตรวจสอบน้ำหนัก
+    ========================================== */
+
+    if (!weight || weight <= 0) {
+
+        showPackMessage(
+            'กรุณาระบุน้ำหนัก',
+            'error'
+        );
+
+
+        weightInput.focus();
+
+
+        return;
+
+    }
+
+
+    if (weight > remainingStock) {
+
+        showPackMessage(
+            'น้ำหนักมากกว่า Stock ที่เหลือ',
+            'error'
+        );
+
+
+        weightInput.focus();
+
+
+        return;
+
+    }
+
+
+    /* ==========================================
+       ป้องกันการกดซ้ำ
+    ========================================== */
+
+    if (packButton.disabled) {
+
+        return;
+
+    }
+
+
+    /* ==========================================
+       เปลี่ยนปุ่มเป็นกำลังแพ็ค
+    ========================================== */
+
+    const originalButtonText =
+        packButton.innerHTML;
+
+
+    packButton.disabled =
+        true;
+
+
+    packButton.classList.add(
+        'packing'
+    );
+
+
+    packButton.classList.remove(
+        'success'
+    );
+
+
+    packButton.innerHTML =
+        '⏳ กำลังแพ็ค...';
+
+
+    clearPackMessage();
+
+
+    /* ==========================================
+       ส่งข้อมูลไป Django
+    ========================================== */
+
+    const formData =
+        new FormData();
+
+
+    formData.append(
+        'product_id',
+        selectedProductId
+    );
+
+
+    formData.append(
+        'weight',
+        weight
+    );
+
+
+    fetch(
+        '/api/pack-product/',
+        {
+
+            method: 'POST',
+
+            headers: {
+
+                'X-CSRFToken':
+                    csrftoken
+
+            },
+
+            body:
+                formData
+
+        }
+    )
+
+    .then(response => {
+
+        if (!response.ok) {
+
+            throw new Error(
+                `HTTP ${response.status}`
+            );
+
+        }
+
+
+        return response.json();
+
+    })
+
+    .then(data => {
+
+
+        /* ======================================
+           แพ็คไม่สำเร็จ
+        ====================================== */
+
+        if (!data.success) {
+
+            showPackMessage(
+                data.message ||
+                'แพ็คสินค้าไม่สำเร็จ',
+                'error'
+            );
+
+
+            packButton.disabled =
+                false;
+
+
+            packButton.classList.remove(
+                'packing'
+            );
+
+
+            packButton.innerHTML =
+                originalButtonText;
+
+
+            weightInput.focus();
+
+
+            return;
+
+        }        /* ======================================
+           แพ็คสำเร็จ
+        ====================================== */
+
+        showPackMessage(
+            `✅ บันทึกสำเร็จ • Barcode: ${data.barcode} • ฿${data.selling_price}`,
+            'success'
+        );
+
+
+        /* ======================================
+           อัปเดต Stock ในหน้าจอ (ใช้ค่าจาก server)
+        ====================================== */
+
+        remainingStock =
+            data.remaining_stock ||
+            Math.max(
+                0,
+                remainingStock - weight
+            );
+
+        /* ======================================
+           อัปเดต Stock บนหน้าจอ (source card)
+        ====================================== */
+
+        var sourceStockEl = document.getElementById(
+            'source-stock-' + data.product_id
+        );
+
+        if (sourceStockEl) {
+            sourceStockEl.innerHTML =
+                remainingStock.toFixed(2) + ' g';
+        }
+
+
+        /* ======================================
+           เพิ่มสินค้าที่แพ็คลงในรายการ รอ Sync
+        ====================================== */
+
+        appendPendingProduct(data);
+
+        updatePendingCount(1);
+
+
+        /* ======================================
+           แสดงสถานะสำเร็จ แล้วเตรียมแพ็คถัดไป
+        ====================================== */
+
+        packButton.classList.remove('packing');
+
+        packButton.classList.add('success');
+
+        packButton.innerHTML = '✅ แพ็คสำเร็จ';
+
+
+        /* ======================================
+           ล้างน้ำหนัก + ดึง barcode ถัดไปอัตโนมัติ
+        ====================================== */
+
+        weightInput.value = '';
+
+        updatePackPrice();
+
+
+        /*  รอ 1 วินาที ให้ผู้ใช้เห็นสถานะ แล้วดึง barcode ถัดไป  */
+
+        setTimeout(function() {
+
+            fetchNextBarcode(
+                selectedProductId,
+                packButton,
+                weightInput
+            );
+
+        }, 1000);
+
+
+    })
+
+
+    .catch(error => {
+
+        console.error('PACK ERROR:', error);
+
+        showPackMessage('เกิดข้อผิดพลาดในการแพ็คสินค้า', 'error');
+
+        packButton.disabled = false;
+        packButton.classList.remove('packing', 'success');
+        packButton.innerHTML = originalButtonText;
+        weightInput.disabled = false;
+        weightInput.focus();
+    });
+
+}
+
+
+/* =====================================================
+   DARK MODE
+===================================================== */
+
+function applyTheme() {
+
+    const saved =
+        localStorage.getItem(
+            'clmeat_dark_mode'
+        );
+
+
+    if (
+        saved === 'true'
+    ) {
+
+        document.documentElement
+            .classList
+            .add('dark-mode');
+
+        document.body
+            .classList
+            .add('dark-mode');
+
+    }
+
+
+    updateThemeButton();
+
+}
+
+
+function updateThemeButton() {
+
+    const btn =
+        document.getElementById(
+            'themeBtn'
+        );
+
+
+    if (!btn) return;
+
+
+    const dark =
+        document.body
+            .classList
+            .contains(
+                'dark-mode'
+            );
+
+
+    btn.textContent =
+        dark ? '☀️' : '🌙';
+
+
+    btn.title =
+        dark
+            ? 'เปลี่ยนเป็นโหมดสว่าง'
+            : 'เปลี่ยนเป็นโหมดมืด';
+
+}
+
+
+function toggleTheme() {
+
+    document.documentElement
+        .classList
+        .toggle(
+            'dark-mode'
+        );
+
+    document.body
+        .classList
+        .toggle(
+            'dark-mode'
+        );
+
+
+    localStorage.setItem(
+        'clmeat_dark_mode',
+        document.documentElement
+            .classList
+            .contains(
+                'dark-mode'
+            )
+            ? 'true'
+            : 'false'
+    );
+
+
+    updateThemeButton();
+
+}
+
+window.toggleDarkMode = toggleTheme;
+
+applyTheme();
+
+
+/* =====================================================
+   NIIMBOT PRINT BRIDGE
+
+   -----------------------------------------------------
+   Python bridge บน Mac รับ POST JSON ที่:
+   http://127.0.0.1:8765/print
+===================================================== */
+
+const NIIMBOT_PRINT_URL =
+    'http://127.0.0.1:8765/print';
+
+
+function printExistingProduct(
+    event,
+    button
+) {
+
+    if (event) {
+
+        event.preventDefault();
+
+        event.stopPropagation();
+
+    }
+
+
+    if (!button) return;
+
+
+    const payload = {
+
+        id:
+            button.dataset.id || '',
+
+        barcode:
+            button.dataset.barcode || '',
+
+        product_name:
+            button.dataset.name || '',
+
+        weight:
+            parseFloat(
+                button.dataset.weight || '0'
+            ),
+
+        selling_price:
+            parseFloat(
+                button.dataset.price || '0'
+            ),
+
+        sku:
+            button.dataset.sku || '',
+
+        lot_number:
+            button.dataset.lot || '',
+
+        import_from:
+            button.dataset.source || '',
+
+        mfg:
+            button.dataset.mfg || ''
+
+    };
+
+
+    if (!payload.barcode) {
+
+        showGlobalMessage(
+            'รายการนี้ไม่มี Barcode',
+            'error'
+        );
+
+
+        return;
+
+    }
+
+
+    const originalText =
+        button.innerHTML;
+
+
+    button.disabled =
+        true;
+
+
+    button.innerHTML =
+        '⏳ กำลังส่งไป NIIMBOT...';
+
+
+    fetch(
+        NIIMBOT_PRINT_URL,
+        {
+
+            method: 'POST',
+
+            headers: {
+                'Content-Type':
+                    'application/json'
+            },
+
+            body:
+                JSON.stringify(
+                    payload
+                )
+
+        }
+    )
+
+
+    .then(async response => {
+
+        let data = {};
+
+        try {
+
+            data =
+                await response.json();
+
+        } catch (_) {}
+
+
+        if (
+            !response.ok ||
+            data.success === false
+        ) {
+
+            throw new Error(
+                data.message ||
+                `NIIMBOT Bridge HTTP ${response.status}`
+            );
+
+        }
+
+
+        return data;
+
+    })
+
+
+    .then(() => {
+
+        showGlobalMessage(
+            `ส่ง ${payload.barcode} ไป NIIMBOT แล้ว`,
+            'success'
+        );
+
+
+        button.innerHTML =
+            '✓ ส่งพิมพ์แล้ว';
+
+
+        setTimeout(() => {
+
+            button.innerHTML =
+                originalText;
+
+            button.disabled =
+                false;
+
+        }, 1800);
+
+    })
+
+
+    .catch(error => {
+
+        console.error(
+            'NIIMBOT:',
+            error
+        );
+
+
+        showGlobalMessage(
+            'ส่งไป NIIMBOT ไม่สำเร็จ: ' +
+            error.message,
+            'error'
+        );
+
+
+        button.innerHTML =
+            originalText;
+
+
+        button.disabled =
+            false;
+
+    });
+
+}
+
+
+function showGlobalMessage(
+    message,
+    type = 'success'
+) {
+
+    let box =
+        document.getElementById(
+            'globalMessage'
+        );
+
+
+    if (!box) {
+
+        box =
+            document.createElement(
+                'div'
+            );
+
+
+        box.id =
+            'globalMessage';
+
+
+        Object.assign(
+            box.style,
+            {
+
+                position:'fixed',
+                left:'50%',
+                bottom:'20px',
+                transform:
+                    'translateX(-50%)',
+                zIndex:'3000',
+                maxWidth:
+                    'calc(100% - 30px)',
+                padding:
+                    '12px 16px',
+                borderRadius:
+                    '10px',
+                fontWeight:'800',
+                boxShadow:
+                    '0 10px 30px rgba(0,0,0,.25)',
+                textAlign:'center'
+
+            }
+        );
+
+
+        document.body
+            .appendChild(
+                box
+            );
+
+    }
+
+
+    box.textContent =
+        message;
+
+
+    box.style.color =
+        type === 'error'
+            ? '#fecaca'
+            : '#dcfce7';
+
+
+    box.style.background =
+        type === 'error'
+            ? '#991b1b'
+            : '#166534';
+
+
+    box.style.display =
+        'block';
+
+
+    clearTimeout(
+        window.__globalMessageTimer
+    );
+
+
+    window.__globalMessageTimer =
+        setTimeout(
+            () => {
+
+                box.style.display =
+                    'none';
+
+            },
+            3000
+        );
+
+}
+
+
+
+/* =====================================================
+   PRICE / PROMOTION MANAGEMENT
+===================================================== */
+
+function getPriceCheckboxes() {
+    return Array.from(
+        document.querySelectorAll('.price-checkbox')
+    );
+}
+
+function getVisiblePriceRows() {
+    return Array.from(
+        document.querySelectorAll('.price-product')
+    ).filter(row => !row.classList.contains('hidden'));
+}
+
+function updatePriceSelectedCount() {
+    const count = getPriceCheckboxes()
+        .filter(checkbox => checkbox.checked)
+        .length;
+
+    const element =
+        document.getElementById('priceSelectedCount');
+
+    if (element) {
+        element.textContent = count;
+    }
+}
+
+function selectVisiblePrices() {
+    getVisiblePriceRows().forEach(row => {
+        const checkbox =
+            row.querySelector('.price-checkbox');
+
+        if (checkbox) {
+            checkbox.checked = true;
+        }
+    });
+
+    updatePriceSelectedCount();
+}
+
+function clearPriceSelection() {
+    getPriceCheckboxes().forEach(checkbox => {
+        checkbox.checked = false;
+    });
+
+    updatePriceSelectedCount();
+}
+
+function filterPriceProducts() {
+
+    const search =
+        (
+            document.getElementById('priceSearch').value
+            || ''
+        ).trim().toLowerCase();
+
+    const status =
+        document.getElementById('priceStatusFilter').value;
+
+    const lot =
+        (
+            document.getElementById('priceLotFilter').value
+            || ''
+        ).trim();
+
+    document.querySelectorAll('.price-product').forEach(row => {
+
+        const text =
+            (
+                row.dataset.name
+                + ' '
+                + row.dataset.barcode
+                + ' '
+                + row.dataset.sku
+            ).toLowerCase();
+
+        const rowStatus =
+            row.dataset.status || '';
+
+        const rowLot =
+            row.dataset.lot || '';
+
+        const matchSearch =
+            !search || text.includes(search);
+
+        const matchStatus =
+            status === 'all'
+            || rowStatus === status;
+
+        const matchLot =
+            !lot || rowLot === lot;
+
+        row.classList.toggle(
+            'hidden',
+            !(matchSearch && matchStatus && matchLot)
+        );
+
+    });
+
+}
+
+function updateBulkPriceHelp() {
+
+    const mode =
+        document.getElementById('bulkPriceMode').value;
+
+    const value =
+        parseFloat(
+            document.getElementById('bulkPriceValue').value
+        ) || 0;
+
+    const help =
+        document.getElementById('bulkPriceHelp');
+
+    if (!help) return;
+
+    if (mode === 'cost_margin') {
+
+        help.textContent =
+            `ต้นทุนปัจจุบัน + กำไร ${value}% `
+            + '→ ราคาขายแต่ละแพ็คคำนวณจากน้ำหนักจริง';
+
+    } else if (mode === 'discount') {
+
+        help.textContent =
+            `ลดจากราคาขายปัจจุบัน ${value}% `
+            + '→ แต่ละแพ็คจะลดตามราคาปัจจุบันของตัวเอง';
+
+    } else {
+
+        help.textContent =
+            `กำหนดราคาขาย ${value.toFixed(2)} บาท/kg `
+            + '→ ราคาของแต่ละแพ็คคำนวณตามน้ำหนักจริง';
+
+    }
+}
+
+function getSelectedPriceIds() {
+
+    return getPriceCheckboxes()
+        .filter(checkbox => checkbox.checked)
+        .map(checkbox => checkbox.value);
+}
+
+function exportSelectedPrices() {
+
+    const ids =
+        getSelectedPriceIds();
+
+    if (!ids.length) {
+
+        showGlobalMessage(
+            'กรุณาเลือกรายการก่อน Export CSV',
+            'error'
+        );
+
+        return;
+    }
+
+    const url =
+        "{% url 'export_loyverse_csv' %}"
+        + "?ids="
+        + encodeURIComponent(ids.join(','));
+
+    window.location.href = url;
+}
+
+async function undoBulkPrice() {
+
+    const checked = Array.from(
+        document.querySelectorAll(
+            '.price-checkbox:checked'
+        )
+    );
+
+    if (checked.length === 0) {
+        showPriceBulkMessage(
+            'กรุณาเลือกรายการที่ต้องการ Undo',
+            'error'
+        );
+        return;
+    }
+
+    const confirmed = confirm(
+        `ต้องการ Undo ราคาล่าสุดของ ${checked.length} รายการหรือไม่?\n\n` +
+        'ระบบจะคืนกลับไปเป็นราคาก่อนการปรับครั้งล่าสุด'
+    );
+
+    if (!confirmed) return;
+
+    const formData = new FormData();
+
+    checked.forEach(checkbox => {
+        formData.append(
+            'product_ids',
+            checkbox.value
+        );
+    });
+
+    try {
+
+        const response = await fetch(
+            '{% url "undo_bulk_prices" %}',
+            {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': getCookie('csrftoken')
+                },
+                body: formData
+            }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+            throw new Error(
+                data.message ||
+                'Undo ไม่สำเร็จ'
+            );
+        }
+
+        showPriceBulkMessage(
+            data.message + ' กำลังรีเฟรชข้อมูล...',
+            'success'
+        );
+
+        setTimeout(() => {
+            window.location.reload();
+        }, 700);
+
+    } catch (error) {
+
+        console.error(
+            'UNDO PRICE:',
+            error
+        );
+
+        showPriceBulkMessage(
+            error.message ||
+            'Undo ไม่สำเร็จ',
+            'error'
+        );
+    }
+}
+
+
+async function applyBulkPrice() {
+
+    const ids =
+        getSelectedPriceIds();
+
+    if (!ids.length) {
+
+        showGlobalMessage(
+            'กรุณาเลือกรายการก่อนปรับราคา',
+            'error'
+        );
+
+        return;
+    }
+
+    const mode =
+        document.getElementById('bulkPriceMode').value;
+
+    const value =
+        parseFloat(
+            document.getElementById('bulkPriceValue').value
+        );
+
+    if (!Number.isFinite(value)) {
+
+        showGlobalMessage(
+            'กรุณาระบุค่าที่ใช้คำนวณ',
+            'error'
+        );
+
+        return;
+    }
+
+    let confirmText = '';
+
+    if (mode === 'cost_margin') {
+
+        confirmText =
+            `คำนวณราคาใหม่จากต้นทุนปัจจุบัน `
+            + `+ กำไร ${value}% `
+            + `จำนวน ${ids.length} รายการ?`;
+
+    } else if (mode === 'discount') {
+
+        confirmText =
+            `ลดราคาจากราคาปัจจุบัน ${value}% `
+            + `จำนวน ${ids.length} รายการ?`;
+
+    } else {
+
+        confirmText =
+            `ตั้งราคาขายใหม่ ${value} บาท/kg `
+            + `จำนวน ${ids.length} รายการ?`;
+
+    }
+
+    if (!confirm(confirmText)) {
+        return;
+    }
+
+    const formData =
+        new FormData();
+
+    ids.forEach(id => {
+        formData.append(
+            'product_ids',
+            id
+        );
+    });
+
+    formData.append(
+        'mode',
+        mode
+    );
+
+    formData.append(
+        'value',
+        value
+    );
+
+    try {
+
+        const response =
+            await fetch(
+                "{% url 'bulk_update_prices' %}",
+                {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRFToken':
+                            csrftoken
+                    },
+                    body: formData
+                }
+            );
+
+        const data =
+            await response.json();
+
+        if (!response.ok || !data.success) {
+
+            throw new Error(
+                data.message
+                || 'ปรับราคาไม่สำเร็จ'
+            );
+        }
+
+        const summary =
+            data.preview
+                .slice(0, 8)
+                .map(item =>
+                    `${item.barcode}: `
+                    + `฿${item.old_price.toFixed(0)}`
+                    + ` → `
+                    + `฿${item.new_price.toFixed(0)}`
+                )
+                .join(' | ');
+
+        showGlobalMessage(
+            `${data.message} • ${summary}`,
+            'success'
+        );
+
+        // อัปเดตตัวเลขราคาบนหน้าจอทันที
+        data.preview.forEach(item => {
+
+            const checkbox =
+                document.querySelector(
+                    `.price-checkbox[value="${item.id}"]`
+                );
+
+            if (!checkbox) return;
+
+            const row =
+                checkbox.closest('.price-product');
+
+            if (!row) return;
+
+            const price =
+                row.querySelector('.price-current');
+
+            if (price) {
+                price.textContent =
+                    `฿${Number(item.new_price).toFixed(0)}`;
+            }
+
+        });
+
+        // ไม่ยกเลิก selection เพื่อให้ Export CSV ต่อได้ทันที
+        updatePriceSelectedCount();
+
+    } catch (error) {
+
+        console.error(
+            'BULK PRICE ERROR:',
+            error
+        );
+
+        showGlobalMessage(
+            error.message
+            || 'เกิดข้อผิดพลาดในการปรับราคา',
+            'error'
+        );
+    }
+}
+
+updateBulkPriceHelp();
+
+/* =====================================================
+   SELECT
+===================================================== */
+
+function getCheckboxes() {
+
+    return document
+        .querySelectorAll(
+            '.product-checkbox'
+        );
+
+}
+
+
+function selectAll() {
+
+    getCheckboxes()
+        .forEach(
+            checkbox => {
+
+                checkbox.checked =
+                    true;
+
+            }
+        );
+
+
+    updateSelectedCount();
+
+}
+
+
+function clearSelection() {
+
+    getCheckboxes()
+        .forEach(
+            checkbox => {
+
+                checkbox.checked =
+                    false;
+
+            }
+        );
+
+
+    updateSelectedCount();
+
+}
+
+
+function updateSelectedCount() {
+
+    const count =
+        document
+            .querySelectorAll(
+                '.product-checkbox:checked'
+            )
+            .length;
+
+
+    document
+        .getElementById(
+            'selectedCount'
+        )
+        .textContent =
+            count;
+
+}
+
+
+/* =====================================================
+   CONFIRM SYNC
+===================================================== */
+
+function confirmSync() {
+
+    const checked =
+        Array.from(
+            document
+                .querySelectorAll(
+                    '.product-checkbox:checked'
+                )
+        );
+
+
+    if (
+        checked.length === 0
+    ) {
+
+        showGlobalMessage(
+            'กรุณาเลือกรายการก่อน',
+            'error'
+        );
+
+
+        return;
+
+    }
+
+
+    const formData =
+        new FormData();
+
+
+    checked.forEach(
+        checkbox => {
+
+            formData.append(
+                'product_ids',
+                checkbox.value
+            );
+
+        }
+    );
+
+
+    if (
+        !confirm(
+            `ยืนยันว่า ${checked.length} รายการ `
+            +
+            `ถูกเพิ่มขึ้น Loyverse แล้วใช่หรือไม่?`
+        )
+    ) {
+
+        return;
+
+    }
+
+
+    fetch(
+        "{% url 'confirm_loyverse_sync' %}",
+        {
+
+            method: 'POST',
+
+            headers: {
+
+                'X-CSRFToken':
+                    csrftoken
+
+            },
+
+            body:
+                formData
+
+        }
+    )
+
+
+    .then(
+        response =>
+            response.json()
+    )
+
+
+    .then(
+        data => {
+
+            if (!data.success) {
+
+                showGlobalMessage(
+                    data.message ||
+                    'ไม่สามารถยืนยัน Sync ได้',
+                    'error'
+                );
+
+
+                return;
+
+            }
+
+
+            showGlobalMessage(
+                `ยืนยันสำเร็จ • ${data.count} รายการ • Sync #${data.batch_id}`,
+                'success'
+            );
+
+
+            location.reload();
+
+        }
+    )
+
+
+    .catch(
+        error => {
+
+            console.error(
+                error
+            );
+
+
+            showGlobalMessage(
+                'เกิดข้อผิดพลาดในการยืนยัน',
+                'error'
+            );
+
+        }
+    );
+
+}
+
+</script>
+
+
+    <script>
+// ============================================================
+// SHARED DARK MODE - ใช้ร่วมทุกหน้า
+// ============================================================
+(function() {
+    // โหลดโหมดจาก localStorage
+    var saved = localStorage.getItem('clmeat_dark_mode');
+    if (saved === 'true') {
+        document.documentElement.classList.add('dark-mode');
+        document.body.classList.add('dark-mode');
+    }
+
+    // ฟังก์ชัน toggle
+    window.toggleDarkMode = function() {
+        var isDark = document.documentElement.classList.toggle('dark-mode');
+        document.body.classList.toggle('dark-mode');
+        localStorage.setItem('clmeat_dark_mode', isDark ? 'true' : 'false');
+
+        // อัปเดต icon ปุ่ม
+        var btns = document.querySelectorAll('.theme-btn');
+        btns.forEach(function(btn) {
+            btn.textContent = isDark ? '☀️' : '🌙';
+        });
+    };
+
+    // อัปเดต icon ปุ่มเมื่อโหลดหน้า
+    document.addEventListener('DOMContentLoaded', function() {
+        var isDark = document.documentElement.classList.contains('dark-mode');
+        var btns = document.querySelectorAll('.theme-btn');
+        btns.forEach(function(btn) {
+            btn.textContent = isDark ? '☀️' : '🌙';
+        });
+    });
+})();
+
+    </script>
+{% endblock %}

@@ -1,0 +1,105 @@
+# ============================================================
+# CL.MEAT Unified Project — .gitignore
+# ============================================================
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+eggs/
+*.whl
+
+# === Virtual environments ===
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# === Environment variables (NEVER commit secrets) ===
+.env
+.env.*
+!.env.example
+
+# === Django ===
+db.sqlite3
+db.sqlite3-journal
+db.sqlite3-shm
+db.sqlite3-wal
+media/
+staticfiles/
+*.log
+local_settings.py
+
+# === IDE / Editor ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.settings/
+.classpath
+
+# === OS ===
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+
+# === Node.js (if any) ===
+node_modules/
+package-lock.json
+yarn.lock
+.npm
+
+# === Testing ===
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+.pytest_cache/
+.tox/
+.nox/
+
+# === Database dumps ===
+*.dump
+*.sql
+*.bak
+
+# === Freebuff internal ===
+.freebuff/
+
+# === Build artifacts ===
+*.pyo
+*.pyd
+
+# === Large files / binary ===
+*.zip
+*.tar.gz
+*.rar
+*.7z
+*.pdf
+
+# === Logs ===
+logs/
+*.log
+pip-log.txt
+
+# === Mypy ===
+.mypy_cache/
+
+# === Ruff ===
+.ruff_cache/
+
+# === Docker ===
+docker-compose.override.yml

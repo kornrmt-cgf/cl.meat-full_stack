@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}แก้ไขแผนงาน #{{ plan.id }} - CL.MEAT{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>✏️ แก้ไขแผนงาน #{{ plan.id }}</h1>
+    <a href="{% url 'planning:plan_detail' pk=plan.pk %}" class="btn btn-outline">← กลับ</a>
+</div>
+
+<!-- Current package info -->
+<div class="card mb-6">
+    <div class="card-body">
+        <div class="d-flex gap-4 align-center flex-wrap">
+            <div>
+                <span class="text-xs text-muted">สินค้า</span><br>
+                <strong>{{ plan.package.display_name }}</strong>
+            </div>
+            <div>
+                <span class="text-xs text-muted">บาร์โค้ด</span><br>
+                <span class="font-mono">{{ plan.package.barcode|default:"-" }}</span>
+            </div>
+            <div>
+                <span class="text-xs text-muted">สถานะปัจจุบัน</span><br>
+                <span class="status-badge status-{{ plan.package.current_state|lower }}">{{ plan.package.get_current_state_display }}</span>
+            </div>
+            <div>
+                <span class="text-xs text-muted">สถานะแผน</span><br>
+                <span class="status-badge status-{{ plan.status|lower }}">{{ plan.status }}</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit form -->
+<div class="card form-container">
+    <div class="card-body">
+        <form method="post">
+            {% csrf_token %}
+
+            <div class="form-group">
+                <label class="form-label" for="id_target_ready_date">📅 วันที่ต้องการพร้อมขาย</label>
+                <div class="d-flex gap-3">
+                    <div style="flex:1;">{{ form.target_ready_date }}</div>
+                    <div style="flex:1;">{{ form.target_ready_time }}</div>
+                </div>
+                {% if form.target_ready_date.errors %}<div class="form-errors">{{ form.target_ready_date.errors }}</div>{% endif %}
+            </div>
+
+            <div class="d-flex gap-4">
+                <div class="form-group" style="flex:1;">
+                    <label class="form-label">🧊 โปรไฟล์แช่แข็ง</label>
+                    {{ form.freeze_profile }}
+                    {% if form.freeze_profile.errors %}<div class="form-errors">{{ form.freeze_profile.errors }}</div>{% endif %}
+                </div>
+                <div class="form-group" style="flex:1;">
+                    <label class="form-label">💧 โปรไฟล์ละลายน้ำแข็ง</label>
+                    {{ form.thaw_profile }}
+                    {% if form.thaw_profile.errors %}<div class="form-errors">{{ form.thaw_profile.errors }}</div>{% endif %}
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">📊 สถานะแผนงาน</label>
+                {{ form.status }}
+            </div>
+
+            <div class="alert alert-info">
+                <strong>ℹ️</strong> เมื่อบันทึก: ระบบจะคำนวณวันเวลาทั้งหมดใหม่โดยอัตโนมัติ
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary btn-lg">💾 บันทึกและคำนวณใหม่</button>
+                <a href="{% url 'planning:plan_detail' pk=plan.pk %}" class="btn btn-outline btn-lg">ยกเลิก</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

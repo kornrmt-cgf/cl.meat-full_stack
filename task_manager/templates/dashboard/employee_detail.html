@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+
+{% block title %}{{ user.display_name }} - CL.MEAT TaskManager{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex items-center gap-4">
+        <a href="{% url 'dashboard:employee-workload' %}" class="btn btn-ghost text-sm">← กลับ</a>
+        <div class="w-12 h-12 bg-primary-600 rounded-full flex items-center justify-center">
+            <span class="text-white font-bold">{{ user.initials }}</span>
+        </div>
+        <div>
+            <h1 class="text-2xl font-bold text-dark-text">{{ user.display_name }}</h1>
+            <p class="text-dark-muted">{{ user.email }}</p>
+        </div>
+    </div>
+
+    <!-- Date Range Filter -->
+    <div class="card">
+        <form method="get" class="flex flex-wrap gap-4 items-end">
+            <div>
+                <label class="block text-sm text-dark-muted mb-1">ตั้งแต่</label>
+                <input type="date" name="date_from" value="{{ date_from|date:'Y-m-d' }}" class="form-input">
+            </div>
+            <div>
+                <label class="block text-sm text-dark-muted mb-1">ถึง</label>
+                <input type="date" name="date_to" value="{{ date_to|date:'Y-m-d' }}" class="form-input">
+            </div>
+            <button type="submit" class="btn btn-primary text-sm">🔍 ค้นหา</button>
+        </form>
+    </div>
+
+    <!-- Stats -->
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div class="card text-center">
+            <p class="text-3xl font-bold text-primary-400">{{ total }}</p>
+            <p class="text-sm text-dark-muted">งานทั้งหมด</p>
+        </div>
+        <div class="card text-center">
+            <p class="text-3xl font-bold text-emerald-400">{{ completed }}</p>
+            <p class="text-sm text-dark-muted">เสร็จแล้ว</p>
+        </div>
+        <div class="card text-center">
+            <p class="text-3xl font-bold text-amber-400">{{ in_progress }}</p>
+            <p class="text-sm text-dark-muted">กำลังทำ</p>
+        </div>
+        <div class="card text-center">
+            <p class="text-3xl font-bold text-red-400">{{ problem }}</p>
+            <p class="text-sm text-dark-muted">ปัญหา</p>
+        </div>
+        <div class="card text-center">
+            <p class="text-3xl font-bold text-red-500">{{ overdue }}</p>
+            <p class="text-sm text-dark-muted">เกินกำหนด</p>
+        </div>
+    </div>
+
+    <!-- Task History -->
+    <div class="card">
+        <h2 class="text-lg font-semibold text-dark-text mb-4">📜 ประวัติงาน</h2>
+        {% if task_history %}
+        <div class="space-y-3">
+            {% for task in task_history %}
+            <a href="{% url 'tasks:detail' task.pk %}" class="flex items-center justify-between p-3 bg-dark-bg rounded-lg hover:bg-dark-border/50 transition-colors">
+                <div class="flex items-center gap-3">
+                    <span class="badge status-{{ task.status }}">{{ task.get_status_display }}</span>
+                    <div>
+                        <p class="text-dark-text font-medium">{{ task.title }}</p>
+                        <p class="text-xs text-dark-muted">{{ task.task_date|date:"d/m/Y" }} {% if task.start_at %}| {{ task.start_at|date:"H:i" }}{% endif %}</p>
+                    </div>
+                </div>
+                <div class="text-right">
+                    <span class="badge {{ task.priority_badge_class }}">{{ task.get_priority_display }}</span>
+                    {% if task.is_overdue %}
+                    <span class="badge bg-red-600 mt-1">เกินกำหนด</span>
+                    {% endif %}
+                </div>
+            </a>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-dark-muted text-center py-4">ไม่มีประวัติงานในช่วงเวลานี้</p>
+        {% endif %}
+    </div>
+
+    <!-- Problem Reports -->
+    {% if reports %}
+    <div class="card border-red-700">
+        <h2 class="text-lg font-semibold text-dark-text mb-4">⚠️ รายงานปัญหา</h2>
+        <div class="space-y-3">
+            {% for report in reports %}
+            <div class="p-3 bg-red-900/20 rounded-lg">
+                <div class="flex items-center gap-2 mb-1">
+                    <span class="badge bg-red-600">{{ report.get_report_type_display }}</span>
+                    <span class="text-dark-text font-medium">{{ report.title }}</span>
+                </div>
+                <p class="text-sm text-dark-muted">{{ report.description }}</p>
+                <p class="text-xs text-dark-muted mt-1">งาน: {{ report.task.title }} | {{ report.created_at|date:"d/m H:i" }}</p>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

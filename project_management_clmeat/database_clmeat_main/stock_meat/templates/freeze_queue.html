@@ -1,0 +1,1160 @@
+{% extends "base.html" %}
+{% block title %}🧊 ระบบจัดคิวหมุนเวียนสินค้า{% endblock %}
+{% block extra_css %}
+<style>
+/* ---- Freeze Queue page-specific ---- */
+    --card-soft: #f8f9fa;
+    --text: #1a1a2e;
+    --text-secondary: #6b7280;
+    --border: #e2e5ea;
+    --input-bg: #ffffff;
+    --accent: #2563eb;
+    --accent-hover: #1d4ed8;
+    --success: #16a34a;
+    --warning: #f59e0b;
+    --danger: #dc2626;
+    --info: #0ea5e9;
+    --shadow: 0 1px 3px rgba(0,0,0,0.08);
+    --shadow-lg: 0 4px 16px rgba(0,0,0,0.1);
+    --radius: 12px;
+    --radius-sm: 8px;
+    --transition: 0.2s ease;
+}
+
+html.dark-mode {
+    --bg: #0f172a;
+    --card: #1e293b;
+    --card-soft: #172235;
+    --text: #e2e8f0;
+    --text-secondary: #94a3b8;
+    --border: #334155;
+    --input-bg: #0f172a;
+    --shadow: 0 1px 3px rgba(0,0,0,0.3);
+    --shadow-lg: 0 4px 16px rgba(0,0,0,0.4);
+}
+
+/* ---- Reset & Base ---- */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Sarabun', Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    transition: background var(--transition), color var(--transition);
+    -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ---- Container ---- */
+.container { max-width: 1200px; margin: 0 auto; padding: 16px; }
+
+/* ============================================================
+   NAVBAR (with hamburger)
+   ============================================================ */
+.navbar {
+    position: sticky; top: 0; z-index: 100;
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    padding: 0 16px;
+    box-shadow: var(--shadow);
+    transition: background var(--transition);
+}
+.navbar-inner {
+    max-width: 1200px; margin: 0 auto;
+    display: flex; align-items: center; justify-content: space-between;
+    height: 56px;
+}
+.navbar-brand {
+    font-size: 18px; font-weight: 900;
+    color: var(--text); display: flex; align-items: center; gap: 8px;
+    white-space: nowrap;
+}
+.navbar-brand:hover { text-decoration: none; }
+.navbar-links {
+    display: flex; align-items: center; gap: 6px;
+}
+.navbar-links a, .navbar-links button {
+    padding: 6px 12px; border-radius: var(--radius-sm);
+    font-size: 13px; font-weight: 600; cursor: pointer;
+    border: 1px solid var(--border); background: var(--card-soft);
+    color: var(--text); text-decoration: none; white-space: nowrap;
+    transition: all var(--transition); display: inline-flex;
+    align-items: center; gap: 4px;
+}
+.navbar-links a:hover, .navbar-links button:hover {
+    background: var(--accent); color: white; border-color: var(--accent);
+    text-decoration: none;
+}
+.navbar-links a.active {
+    background: var(--accent); color: white; border-color: var(--accent);
+}
+
+/* Theme toggle */
+.theme-btn {
+    width: 36px; height: 36px; border-radius: 50%;
+    border: 1px solid var(--border); background: var(--card-soft);
+    cursor: pointer; font-size: 16px; display: inline-flex;
+    align-items: center; justify-content: center; transition: all var(--transition);
+    padding: 0;
+}
+.theme-btn:hover { background: var(--accent); border-color: var(--accent); }
+.nav-active { color: var(--accent) !important; background: rgba(37,99,235,0.08); border-radius: var(--radius-sm); }
+
+/* Hamburger */
+.hamburger {
+    display: none; width: 36px; height: 36px; border: none;
+    background: transparent; cursor: pointer; padding: 6px;
+    flex-direction: column; justify-content: center; gap: 5px;
+}
+.hamburger span {
+    display: block; width: 100%; height: 2px; background: var(--text);
+    border-radius: 2px; transition: all 0.3s;
+}
+
+/* ============================================================
+   CARDS & SECTIONS
+   ============================================================ */
+.card, .section {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 20px;
+    margin-bottom: 16px; box-shadow: var(--shadow);
+    transition: background var(--transition), border-color var(--transition);
+}
+.card-title, .section-title {
+    font-size: 18px; font-weight: 700; color: var(--text);
+    margin-bottom: 16px; display: flex; align-items: center; gap: 8px;
+}
+
+/* Stats */
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.stat-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px;
+    box-shadow: var(--shadow); transition: all var(--transition);
+}
+.stat-card .label { font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; font-weight: 600; }
+.stat-card .value { font-size: 28px; font-weight: 800; }
+
+/* Grid layouts */
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 20px; }
+
+/* ============================================================
+   TABLES
+   ============================================================ */
+.table-wrapper {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden;
+    box-shadow: var(--shadow); transition: all var(--transition);
+}
+table { width: 100%; border-collapse: collapse; }
+thead th {
+    background: var(--card-soft); padding: 10px 14px; text-align: left;
+    font-size: 11px; font-weight: 700; color: var(--text-secondary);
+    text-transform: uppercase; letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border);
+}
+tbody td {
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    font-size: 13px; color: var(--text);
+}
+tbody tr:hover { background: rgba(37, 99, 235, 0.04); }
+tbody tr:last-child td { border-bottom: none; }
+.empty-state { text-align: center; padding: 32px 16px; color: var(--text-secondary); }
+
+/* ============================================================
+   BUTTONS
+   ============================================================ */
+.btn {
+    padding: 8px 16px; border: none; border-radius: var(--radius-sm);
+    font-size: 13px; font-weight: 700; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+    transition: all var(--transition); text-decoration: none;
+    white-space: nowrap;
+}
+.btn:hover { transform: translateY(-1px); text-decoration: none; }
+.btn-primary { background: var(--accent); color: white; }
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-success { background: var(--success); color: white; }
+.btn-success:hover { background: #15803d; }
+.btn-danger { background: var(--danger); color: white; }
+.btn-danger:hover { background: #b91c1c; }
+.btn-warning { background: var(--warning); color: #1a1a2e; }
+.btn-warning:hover { background: #d97706; }
+.btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text-secondary); }
+.btn-outline:hover { border-color: var(--accent); color: var(--accent); background: rgba(37,99,235,0.05); }
+.btn-sm { padding: 4px 10px; font-size: 11px; }
+
+/* ============================================================
+   FORMS
+   ============================================================ */
+.form-group { margin-bottom: 14px; }
+.form-group label {
+    display: block; font-size: 12px; font-weight: 700;
+    color: var(--text-secondary); margin-bottom: 5px;
+}
+.form-control, input, select, textarea {
+    width: 100%; padding: 9px 12px;
+    background: var(--input-bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    font-size: 14px; transition: border-color var(--transition);
+}
+.form-control:focus, input:focus, select:focus, textarea:focus {
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+/* ============================================================
+   MODALS
+   ============================================================ */
+.modal-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.6); z-index: 1000;
+    justify-content: center; align-items: center; padding: 16px;
+    backdrop-filter: blur(4px);
+}
+.modal-overlay.active { display: flex; }
+.modal {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 16px; width: 500px; max-width: 95vw;
+    padding: 24px; box-shadow: var(--shadow-lg);
+    max-height: 85vh; overflow-y: auto;
+}
+.modal h3 { font-size: 18px; font-weight: 700; margin-bottom: 16px; }
+.modal .form-group { margin-bottom: 14px; }
+.modal .form-group label { font-size: 12px; color: var(--text-secondary); margin-bottom: 5px; display: block; }
+.modal select, .modal input, .modal textarea {
+    width: 100%; padding: 9px 12px; background: var(--input-bg);
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    color: var(--text); font-size: 14px;
+}
+.modal .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+
+/* ============================================================
+   TOAST
+   ============================================================ */
+.toast-container { position: fixed; top: 16px; right: 16px; z-index: 2000; }
+.toast {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 12px 18px;
+    margin-bottom: 8px; min-width: 280px;
+    display: flex; align-items: center; gap: 10px;
+    box-shadow: var(--shadow-lg); animation: toastIn 0.3s ease;
+    font-size: 14px; font-weight: 600;
+}
+.toast.success { border-left: 4px solid var(--success); }
+.toast.error { border-left: 4px solid var(--danger); }
+.toast.info { border-left: 4px solid var(--info); }
+@keyframes toastIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+/* ============================================================
+   TOOLTIPS (for charts)
+   ============================================================ */
+.chart-bar-group { position: relative; display: flex; flex-direction: column; align-items: center; }
+.chart-tooltip {
+    display: none; position: absolute; bottom: calc(100% + 8px);
+    left: 50%; transform: translateX(-50%);
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 8px 12px;
+    font-size: 12px; white-space: nowrap; z-index: 100;
+    box-shadow: var(--shadow-lg); pointer-events: none;
+}
+.chart-tooltip::after {
+    content: ''; position: absolute; top: 100%; left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent; border-top-color: var(--border);
+}
+.chart-bar-group:hover .chart-tooltip { display: block; }
+.tt-label { color: var(--text-secondary); font-size: 11px; }
+.tt-value { color: var(--text); font-weight: 700; font-size: 13px; }
+
+/* ============================================================
+   BADGES & STATUS
+   ============================================================ */
+.badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 8px; border-radius: 999px;
+    font-size: 11px; font-weight: 700;
+}
+.badge-success { background: rgba(22,163,74,0.12); color: #16a34a; }
+.badge-warning { background: rgba(245,158,11,0.12); color: #f59e0b; }
+.badge-danger { background: rgba(220,38,38,0.12); color: #dc2626; }
+.badge-info { background: rgba(14,165,233,0.12); color: #0ea5e9; }
+
+/* ============================================================
+   DETAILS / COLLAPSIBLE
+   ============================================================ */
+details.folder { margin-bottom: 10px; }
+details.folder summary {
+    cursor: pointer; padding: 12px 16px; font-weight: 700;
+    background: var(--card-soft); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); list-style: none;
+    display: flex; align-items: center; gap: 8px;
+    transition: background var(--transition);
+}
+details.folder summary:hover { background: var(--card); }
+details.folder summary::-webkit-details-marker { display: none; }
+details.folder .folder-content { padding: 12px; }
+
+/* ============================================================
+   CHART BARS
+   ============================================================ */
+.bar-chart { display: flex; align-items: flex-end; gap: 6px; height: 200px; }
+.bar {
+    width: 100%; border-radius: 4px 4px 0 0;
+    transition: all 0.2s; min-height: 2px; cursor: pointer;
+}
+.bar:hover { filter: brightness(1.2); transform: scaleY(1.03); transform-origin: bottom; }
+
+/* ============================================================
+   RESPONSIVE (Mobile + iPad)
+   ============================================================ */
+@media (max-width: 768px) {
+    .navbar-links {
+        display: none; position: absolute; top: 56px; left: 0; right: 0;
+        background: var(--card); border-bottom: 1px solid var(--border);
+        flex-direction: column; padding: 8px; gap: 4px;
+        box-shadow: var(--shadow-lg); z-index: 99;
+    }
+    .navbar-links.open { display: flex; }
+    .navbar-links a, .navbar-links button {
+        width: 100%; justify-content: center; padding: 10px;
+    }
+    .hamburger { display: flex; }
+
+    .stats-grid { grid-template-columns: repeat(2, 1fr); }
+    .grid-2, .grid-3 { grid-template-columns: 1fr; }
+    .container { padding: 12px; }
+
+    .table-wrapper { overflow-x: auto; }
+    table { min-width: 600px; }
+
+    .modal { width: 95vw; padding: 16px; }
+
+    .header { flex-direction: column; gap: 8px; align-items: stretch; }
+}
+
+@media (max-width: 480px) {
+    .stats-grid { grid-template-columns: 1fr; }
+    .stat-card .value { font-size: 22px; }
+    .navbar-brand { font-size: 15px; }
+}
+
+
+.stat-card.frozen .value { color: var(--info); }
+.stat-card.thawing .value { color: var(--warning); }
+.stat-card.display .value { color: var(--success); }
+.stat-card.pending .value { color: var(--accent); }
+.stat-card.alerts .value { color: var(--danger); }
+.stats-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.btn-scan { transition: all 0.2s; }
+.product-group { margin-bottom: 12px; }
+.product-group summary { cursor: pointer; padding: 12px 16px; font-weight: 700; background: var(--card-soft); border: 1px solid var(--border); border-radius: var(--radius-sm); list-style: none; display: flex; align-items: center; gap: 8px; transition: background var(--transition); }
+.product-group summary:hover { background: var(--card); }
+.product-group summary::-webkit-details-marker { display: none; }
+.product-group .group-content { padding: 0; }
+.group-count { font-size: 12px; color: var(--text-secondary); background: var(--bg); padding: 2px 8px; border-radius: 999px; }
+body.dark-mode .product-group summary { background: var(--card-soft); border-color: var(--border); }
+.max-display-input { width: 60px; padding: 4px 8px; text-align: center; border: 1px solid var(--border); border-radius: 6px; background: var(--input-bg); color: var(--text); font-size: 13px; font-weight: 700; }
+</style>
+{% endblock %}
+{% block content %}
+<div style="height:16px"></div>
+
+<!-- QUICK ACTIONS -->
+<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-bottom:16px;">
+    <button class="btn btn-success" onclick="openAddProductModal()">➕ เพิ่มสินค้าเข้าคิว</button>
+    <button class="btn btn-outline" onclick="checkAlerts()">🔍 ตรวจสอบสถานะ</button>
+</div>
+
+<!-- STATS -->
+<div class="stats-grid">
+    <div class="stat-card pending"><div class="label">🔄 รอการจัดการ</div><div class="value" id="statPending">0</div></div>
+    <div class="stat-card frozen"><div class="label">❄️ แช่แข็ง</div><div class="value" id="statFrozen">0</div></div>
+    <div class="stat-card thawing"><div class="label">🔄 กำลังละลาย</div><div class="value" id="statThawing">0</div></div>
+    <div class="stat-card display"><div class="label">🛒 กำลังวางขาย</div><div class="value" id="statDisplay">0</div></div>
+    <div class="stat-card alerts"><div class="label">🔔 แจ้งเตือน</div><div class="value" id="statAlerts">0</div></div>
+</div>
+
+<!-- ALERTS -->
+<div id="alertsSection"></div>
+
+<!-- BARCODE SCANNER (at top) -->
+<div class="card" style="border-left:4px solid var(--accent);">
+    <div style="font-weight:700;margin-bottom:12px;">📱 สแกน Barcode เปลี่ยนสถานะ</div>
+    <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
+        <div style="flex:1;min-width:200px;">
+            <div style="font-size:13px;color:var(--text-secondary);margin-bottom:6px;">เลือกสถานะก่อนสแกน:</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                <button class="btn btn-outline btn-sm btn-scan" id="scanFrozenBtn" onclick="setScanStatus('frozen')">❄️ แช่แข็ง</button>
+                <button class="btn btn-outline btn-sm btn-scan" id="scanThawingBtn" onclick="setScanStatus('thawing')">🔄 ละลาย</button>
+                <button class="btn btn-outline btn-sm btn-scan" id="scanDisplayBtn" onclick="setScanStatus('display')">🛒 วางขาย</button>
+            </div>
+        </div>
+        <div style="flex:1;min-width:250px;">
+            <input type="text" id="barcodeScanner" placeholder="สแกน barcode ที่นี่..."
+                   style="width:100%;padding:10px;background:var(--input-bg);border:2px solid var(--border);border-radius:8px;color:var(--text);font-size:16px;font-family:monospace;"
+                   onkeydown="if(event.key==='Enter')scanBarcode();" autocomplete="off">
+        </div>
+    </div>
+    <div id="scanStatus" style="margin-top:8px;font-size:13px;color:var(--text-secondary);"></div>
+</div>
+
+<!-- PENDING PRODUCTS (newly packed) -->
+<div class="card" id="pendingSection" style="display:none;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div style="font-weight:700;">🔄 รอการจัดการ <span class="section-count" id="pendingCount">0</span></div>
+        <div style="font-size:12px;color:var(--text-secondary);">สินค้าที่เพิ่งแพ็ค — เลือกว่าจะแช่แข็งหรือวางขาย</div>
+    </div>
+    <div id="pendingTable"></div>
+</div>
+
+<!-- THAWING SECTION -->
+<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div style="font-weight:700;">🔄 กำลังละลาย <span class="section-count" id="thawingCount">0</span></div>
+    </div>
+    <div class="table-wrapper"><table><thead><tr>
+        <th>คิว</th><th>Barcode</th><th>สินค้า</th><th>น้ำหนัก</th><th>ราคาขาย</th><th>สถานะละลาย</th><th>เวลาที่เหลือ</th><th>จัดการ</th>
+    </tr></thead><tbody id="thawingTable"><tr><td colspan="8" class="empty-state">ไม่มีสินค้ากำลังละลาย</td></tr></tbody></table></div>
+</div>
+
+<!-- DISPLAY SECTION -->
+<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div style="font-weight:700;">🛒 กำลังวางขาย <span class="section-count" id="displayCount">0</span></div>
+    </div>
+    <div class="table-wrapper"><table><thead><tr>
+        <th>Barcode</th><th>สินค้า</th><th>น้ำหนัก</th><th>ราคาขาย</th><th>วันที่วาง</th><th>เหลือ/max</th><th>จัดการ</th>
+    </tr></thead><tbody id="displayTable"><tr><td colspan="7" class="empty-state">ไม่มีสินค้ากำลังวางขาย</td></tr></tbody></table></div>
+</div>
+
+<!-- QUEUE (frozen, waiting thaw) -->
+<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div style="font-weight:700;">📋 คิวละลาย (รอ) <span class="section-count" id="queueCount">0</span></div>
+    </div>
+    <div class="table-wrapper"><table><thead><tr>
+        <th>คิว</th><th>Barcode</th><th>สินค้า</th><th>น้ำหนัก</th><th>จัดการ</th>
+    </tr></thead><tbody id="queueTable"><tr><td colspan="5" class="empty-state">ไม่มีสินค้าในคิวละลาย</td></tr></tbody></table></div>
+</div>
+
+<!-- UPCOMING THAW (scheduled freeze_end_at) -->
+<div class="card" id="upcomingCard" style="display:none;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div style="font-weight:700;">📅 กำหนดละลาย <span class="section-count" id="upcomingCount">0</span></div>
+    </div>
+    <div id="upcomingContainer"></div>
+</div>
+
+<!-- FREEZING STATUS (real-time) -->
+<div class="card" id="freezingStatusSection" style="border-left:4px solid var(--info);">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div style="font-weight:700;">🧊 สถานะการแช่แข็ง <span class="section-count" id="freezingStatusCount">0</span></div>
+        <div style="font-size:12px;color:var(--text-secondary);">อัพเดทอัตโนมัติทุก 60 วินาที</div>
+    </div>
+    <div id="freezingStatusContainer" style="max-height:400px;overflow-y:auto;"></div>
+</div>
+
+<!-- FROZEN AVAILABLE (grouped by product_info) -->
+<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div style="font-weight:700;">❄️ แช่แข็ง (พร้อมละลาย) <span class="section-count" id="frozenCount">0</span></div>
+        <button class="btn btn-outline btn-sm" onclick="toggleAllFrozen()">กาง/หุบทั้งหมด</button>
+    </div>
+    <div id="frozenGrouped"></div>
+</div>
+
+<!-- PROCESSING ZONE -->
+<div class="card" id="processingSection" style="display:none;border-left:4px solid var(--danger);">
+    <div style="font-weight:700;margin-bottom:12px;">⚠️ สินค้าหมดอายุ / ต้องแปรรูป</div>
+    <div id="processingTable"></div>
+</div>
+
+<!-- FREEZING CALCULATOR -->
+<div class="card" style="border-left:4px solid var(--info);">
+    <div style="font-weight:700;margin-bottom:12px;">🧊 คำนวณการแช่แข็ง</div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
+        <div class="form-group" style="flex:1;min-width:180px"><label>น้ำหนัก (กรัม)</label><input type="number" id="freezeWeight" value="1000" oninput="calcFreezing()"></div>
+        <div class="form-group" style="flex:1;min-width:180px"><label>ตู้แช่</label><select id="freezeType" onchange="calcFreezing()"><option value="-8">ตู้แช่แข็ง -8°C (มาตรฐาน)</option><option value="-18">ตู้แช่แข็ง -18°C (รวดเร็ว)</option></select></div>
+        <div class="form-group" style="flex:1;min-width:180px"><label>เวลาที่แช่ (นาที)</label><input type="number" id="freezeHours" value="1440" min="0" max="10080" step="10" oninput="calcFreezing()"></div>
+    </div>
+    <div id="freezeResult" style="background:var(--card-soft);border:1px solid var(--border);border-radius:12px;padding:16px;"></div>
+</div>
+
+<!-- SOLD ITEMS -->
+<div class="card" id="soldSection" style="border-left:4px solid var(--success);">
+    <details class="folder">
+    <summary style="cursor:pointer;padding:12px 16px;font-weight:700;background:var(--card-soft);border:1px solid var(--border);border-radius:8px;list-style:none;display:flex;align-items:center;gap:8px">
+        <span style="color:var(--success)">✅ สินค้าขายแล้ว</span>
+        <span id="soldCount" style="background:var(--success);color:#fff;font-size:11px;padding:2px 8px;border-radius:999px"></span>
+    </summary>
+    <div id="soldTable" style="padding:0"></div>
+    </details>
+</div>
+
+</div>
+
+<!-- MODALS -->
+<div class="modal-overlay" id="freezeDurationModal"><div class="modal">
+    <h3>❄️ แช่แข็งสินค้า</h3>
+    <div class="form-group"><label>สินค้า</label><div id="fdProductName" style="font-size:16px;font-weight:600;font-family:monospace;"></div><div id="fdProductWeight" style="font-size:13px;color:var(--text-secondary);"></div></div>
+    <div class="form-group"><label>🧊 เลือกตู้แช่</label><select id="fdFreezerType" onchange="document.getElementById('fdFreezerTemp').value=this.value;updateFreezeDurationCalc()" style="width:100%;padding:10px;border-radius:8px;background:var(--input-bg);color:var(--text);border:1px solid var(--border);font-size:14px;"><option value="-8">🧊 ตู้แช่แข็ง -8°C (มาตรฐาน)</option><option value="-18">🧊 ตู้แช่แข็ง -18°C (รวดเร็ว)</option></select><input type="hidden" id="fdFreezerTemp" value="-8"></div>
+    <div class="form-group"><label>⏱️ เวลาแช่ที่ต้องการ</label><input type="range" id="fdTimeSlider" min="10" max="10080" step="10" value="1440" oninput="_syncTimeFromSlider();updateFreezeDurationCalc()" style="width:100%;accent-color:var(--info);height:8px;margin:8px 0;"><div style="display:flex;gap:8px;align-items:center;"><input type="number" id="fdTimeValue" value="24" min="1" style="width:100px;text-align:center;font-size:18px;font-weight:700;padding:10px;border-radius:8px;background:var(--input-bg);color:var(--text);border:1px solid var(--border);" oninput="_syncTimeFromInput();updateFreezeDurationCalc()"><select id="fdTimeUnit" style="padding:10px;border-radius:8px;background:var(--input-bg);color:var(--text);border:1px solid var(--border);font-size:14px;min-width:80px;" onchange="_syncTimeFromInput();updateFreezeDurationCalc()"><option value="min">นาที</option><option value="hr" selected>ชม.</option><option value="day">วัน</option></select></div></div>
+    <div style="display:flex;gap:12px;align-items:center;margin:12px 0;">
+        <div style="flex:1;border-top:1px solid var(--border);"></div>
+        <span style="font-size:11px;color:var(--text-secondary);white-space:nowrap;">หรือตั้งเวลาเสร็จเอง ↓</span>
+        <div style="flex:1;border-top:1px solid var(--border);"></div>
+    </div>
+    <div class="form-group"><label>📅 ตั้งเวลาแช่เสร็จ (ถ้ามี)</label><div style="position:relative;"><input type="datetime-local" id="fdEndDate" onchange="updateFreezeDurationCalc()" style="width:100%;padding:12px 40px 12px 14px;border-radius:10px;background:var(--input-bg);color:var(--text);border:2px solid var(--info);font-size:15px;font-weight:600;"><span style="position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:20px;pointer-events:none;">📅</span></div></div>
+    <div id="fdCalcResult" style="background:var(--card-soft);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:12px;"></div>
+    <div class="actions"><button class="btn btn-outline" onclick="closeModal('freezeDurationModal')">ยกเลิก</button><button class="btn btn-primary" onclick="confirmFreezeDuration()">❄️ บันทึกและแช่แข็ง</button></div>
+</div></div>
+
+<div class="modal-overlay" id="thawModal"><div class="modal">
+    <h3>🔄 เริ่มละลายสินค้า</h3>
+    <div class="form-group"><label>Barcode / สินค้า</label><div id="thawProductName" style="font-size:16px;font-weight:600;font-family:monospace;"></div></div>
+    <div class="form-group"><label>ระยะเวลาละลาย</label><select id="thawDuration"><option value="12">12 ชม.</option><option value="18">18 ชม.</option><option value="24" selected>24 ชม.</option><option value="36">36 ชม.</option><option value="48">48 ชม.</option></select></div>
+    <div class="actions"><button class="btn btn-outline" onclick="closeModal('thawModal')">ยกเลิก</button><button class="btn btn-primary" onclick="confirmThaw()">❄️ เริ่มละลาย</button></div>
+</div></div>
+
+<div class="modal-overlay" id="displayModal"><div class="modal">
+    <h3>🛒 นำออกวางขาย</h3>
+    <div class="form-group"><label>Barcode / สินค้า</label><div id="displayProductName" style="font-size:16px;font-weight:600;font-family:monospace;"></div></div>
+    <div class="form-group"><label>ระยะเวลาวางขาย</label><select id="displayDays"><option value="1">1 วัน</option><option value="2">2 วัน</option><option value="3" selected>3 วัน</option><option value="5">5 วัน</option><option value="7">7 วัน</option></select></div>
+    <div class="actions"><button class="btn btn-outline" onclick="closeModal('displayModal')">ยกเลิก</button><button class="btn btn-success" onclick="confirmDisplay()">🛒 นำออกวางขาย</button></div>
+</div></div>
+
+<div class="modal-overlay" id="addProductModal"><div class="modal">
+    <h3>➕ เพิ่มสินค้าเข้าคิว</h3>
+    <div class="form-group"><label>🔍 ค้นหา Barcode</label><input type="text" id="barcodeSearch" placeholder="พิมพ์ barcode..." oninput="filterProducts()" style="width:100%;padding:10px;background:var(--input-bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:monospace;"></div>
+    <div class="form-group"><label>เลือกสินค้า (<span id="filteredCount">0</span>)</label><select id="addProductSelect" size="6" style="height:160px;" onchange="onAddProductSelect()"></select></div>
+    <div class="form-group"><label>สถานะ</label><select id="addProductStatus" onchange="toggleAddProductOptions()"><option value="frozen">❄️ แช่แข็ง</option><option value="thawing">🔄 กำลังละลาย</option><option value="display">🛒 วางขายทันที</option></select></div>
+    <div class="form-group" id="addThawGroup" style="display:none"><label>⏱️ ระยะเวลาละลาย</label><select id="addThawHours"><option value="12">12 ชม.</option><option value="18">18 ชม.</option><option value="24" selected>24 ชม.</option><option value="36">36 ชม.</option><option value="48">48 ชม.</option></select></div>
+    <div class="form-group" id="addDisplayGroup" style="display:none"><label>📅 ระยะเวลาวางขาย</label><select id="addDisplayDays"><option value="1">1 วัน</option><option value="2">2 วัน</option><option value="3" selected>3 วัน</option><option value="5">5 วัน</option><option value="7">7 วัน</option></select></div>
+    <div class="form-group" id="addFreezeGroup" style="display:none"><label>🧊 ตู้แช่</label><select id="addFreezerType" onchange="updateModalFreezeCalc()"><option value="-8">ตู้แช่แข็ง -8°C (มาตรฐาน)</option><option value="-18">ตู้แช่แข็ง -18°C (รวดเร็ว)</option></select></div>
+    <input type="hidden" id="addFreezeWeight" value="1000">
+    <div id="addFreezeResult" style="display:none;background:var(--card-soft);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:12px;"></div>
+    <div class="actions"><button class="btn btn-outline" onclick="closeModal('addProductModal')">ยกเลิก</button><button class="btn btn-success" onclick="confirmAddProduct()">➕ บันทึก</button></div>
+</div></div>
+
+<div class="toast-container" id="toastContainer"></div>
+
+<script>
+let currentThawProductId=null,currentDisplayProductId=null,currentDisplayFromPending=false,allProducts=[],scanTargetStatus='';
+
+document.addEventListener('DOMContentLoaded',function(){loadDashboard();loadAllProducts();calcFreezing();setInterval(function(){loadDashboard();},60000);});
+
+async function loadAllProducts(){try{const r=await fetch('/api/freeze-available-products/');const d=await r.json();if(d.success&&d.products)allProducts=d.products;}catch(e){}}
+
+async function loadDashboard(){
+    try{
+        const r=await fetch('/api/freeze-queue/');
+        const d=await r.json();
+        if(d.success)renderDashboard(d.data);
+        const p=await fetch('/api/pending-products/');
+        const pd=await p.json();
+        if(pd.success)renderPending(pd.products);
+        const s=await fetch('/api/sold-items/list/?days=90');
+        const sd=await s.json();
+        if(sd.success)renderSold(sd.items);
+    }catch(e){console.error(e);}
+}
+
+function renderDashboard(data){
+    document.getElementById('statFrozen').textContent=data.frozen_in_queue.length+data.frozen_available.length;
+    document.getElementById('statThawing').textContent=data.thawing.length;
+    document.getElementById('statDisplay').textContent=data.display.length;
+    document.getElementById('statAlerts').textContent=data.alerts.length;
+    renderAlerts(data.alerts);
+    renderThawingTable(data.thawing);
+    renderDisplayTable(data.display,data.display_expired,data.display_expiring_soon);
+    renderQueueTable(data.frozen_in_queue);
+    renderUpcoming(data.thaw_upcoming||[]);
+    renderFrozenGrouped(data.frozen_available);
+    renderFreezingStatus(data.frozen_available);
+    renderProcessing(data.display_expired||[]);
+}
+
+function renderAlerts(alerts){
+    const c=document.getElementById('alertsSection');
+    if(!alerts.length){c.innerHTML='';return;}
+    c.innerHTML=alerts.map(a=>'<div class="alert-card '+a.type+'" style="display:flex;align-items:center;gap:12px;padding:12px;background:var(--card-soft);border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:8px;"><div style="font-size:24px;">'+a.icon+'</div><div style="flex:1;"><div style="font-weight:700;">'+a.title+'</div><div style="font-size:12px;color:var(--text-secondary);">'+a.message+'</div></div><div style="background:var(--danger);color:white;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:700;">'+a.count+'</div></div>').join('');
+}
+
+function renderPending(products){
+    const sec=document.getElementById('pendingSection');
+    const tbl=document.getElementById('pendingTable');
+    const cnt=document.getElementById('pendingCount');
+    cnt.textContent=products.length;
+    if(!products.length){sec.style.display='none';return;}
+    sec.style.display='block';
+    tbl.innerHTML='<div class="table-wrapper"><table><thead><tr><th>Barcode</th><th>สินค้า</th><th>น้ำหนัก</th><th>ราคา</th><th>ตัดสินใจ</th></tr></thead><tbody>'+
+    products.map(p=>'<tr><td style="font-family:monospace;font-weight:700;">'+p.barcode+'</td><td><strong>'+p.name+'</strong></td><td>'+p.weight.toLocaleString()+' g</td><td style="color:var(--success);font-weight:700;">฿'+p.selling_price.toLocaleString()+'</td><td><div style="display:flex;gap:4px;"><button class="btn btn-primary btn-sm" onclick="openFreezeModal('+p.id+',\''+p.name.replace(/'/g,"\\'")+'\','+p.weight+')">❄️ แช่แข็ง</button><button class="btn btn-success btn-sm" onclick="openDisplayModalFromPending('+p.id+',\''+p.barcode+'\')">🛒 วางขาย</button></div></td></tr>'
+    ).join('')+'</tbody></table></div>';
+}
+
+function openDisplayModalFromPending(id,name){currentDisplayProductId=id;currentDisplayFromPending=true;document.getElementById('displayProductName').textContent=name;openModal('displayModal');}
+
+function renderThawingTable(products){
+    const tbody=document.getElementById('thawingTable');
+    document.getElementById('thawingCount').textContent=products.length;
+    if(!products.length){tbody.innerHTML='<tr><td colspan="8" class="empty-state">🔄 ไม่มีสินค้ากำลังละลาย</td></tr>';return;}
+    tbody.innerHTML=products.map(p=>{
+        const h=p.thaw_hours_remaining||0,t=p.thaw_duration_hours||24;
+        const pct=Math.max(0,Math.min(100,((t-h)/t)*100));
+        const timeInfo=p.time_in_status?'<div style="font-size:11px;color:var(--text-secondary);">'+p.time_in_status.label+': '+p.time_in_status.elapsed_display+'</div>':'';
+        const badge=p.is_thaw_complete?'<span class="status-badge status-display">✅ พร้อมวางขาย</span>':'<span class="status-badge status-thawing">⏳ '+h+' ชม.</span>';
+        return '<tr><td><strong>'+p.thaw_queue_position+'</strong></td><td style="font-family:monospace;font-weight:700;">'+p.barcode+'</td><td><strong>'+p.name+'</strong>'+timeInfo+'</td><td>'+p.weight.toLocaleString()+' g</td><td style="color:var(--success);font-weight:700;">฿'+p.selling_price.toLocaleString()+'</td><td><div class="progress-bar"><div class="fill thaw" style="width:'+pct+'%"></div></div></td><td>'+badge+'</td><td>'+(p.is_thaw_complete?'<button class="btn btn-success btn-sm" onclick="openDisplayModal('+p.id+',\''+p.barcode+'\')">🛒 วางขาย</button>':'<span style="color:var(--text-secondary)">รอละลาย...</span>')+'</td></tr>';
+    }).join('');
+}
+
+function renderDisplayTable(products,expired,expiringSoon){
+    const tbody=document.getElementById('displayTable');
+    document.getElementById('displayCount').textContent=products.length;
+    if(!products.length){tbody.innerHTML='<tr><td colspan="7" class="empty-state">🛒 ไม่มีสินค้ากำลังวางขาย</td></tr>';return;}
+    const expIds=(expired||[]).map(p=>p.id);
+    const expSoonIds=(expiringSoon||[]).map(p=>p.id);
+    tbody.innerHTML=products.map(p=>{
+        const d=p.display_days_remaining,m=p.display_max_days||3;
+        const pct=Math.max(0,Math.min(100,((m-d)/m)*100));
+        let sc='status-display',pc='display';
+        if(expIds.includes(p.id)){sc='status-expired';pc='danger';}
+        else if(expSoonIds.includes(p.id)){sc='status-thawing';pc='thaw';}
+        const entered=fmtDate(p.entered_display_at);
+        const timeInfo=p.time_in_status?'<div style="font-size:11px;color:var(--text-secondary);">'+p.time_in_status.label+': '+p.time_in_status.elapsed_display+'</div>':'';
+        return '<tr><td style="font-family:monospace;font-weight:700;">'+p.barcode+'</td><td><strong>'+p.name+'</strong>'+timeInfo+'</td><td>'+p.weight.toLocaleString()+' g</td><td style="color:var(--success);font-weight:700;">฿'+p.selling_price.toLocaleString()+'</td><td>'+entered+'</td><td><span class="status-badge '+sc+'">'+d+' วัน / '+m+'</span><div class="progress-bar"><div class="fill '+pc+'" style="width:'+pct+'%"></div></div></td><td><button class="btn btn-danger btn-sm" onclick="pullFromDisplay('+p.id+',\''+p.barcode+'\')">🧊 กลับแช่</button></td></tr>';
+    }).join('');
+}
+
+function renderQueueTable(products){
+    const tbody=document.getElementById('queueTable');
+    document.getElementById('queueCount').textContent=products.length;
+    if(!products.length){tbody.innerHTML='<tr><td colspan="5" class="empty-state">📋 ไม่มีสินค้าในคิวละลาย</td></tr>';return;}
+    tbody.innerHTML=products.map(p=>{
+        const timeInfo=p.time_in_status?'<div style="font-size:11px;color:var(--text-secondary);">'+p.time_in_status.label+': '+p.time_in_status.elapsed_display+'</div>':'';
+        return '<tr><td><strong>'+p.thaw_queue_position+'</strong></td><td style="font-family:monospace;font-weight:700;">'+p.barcode+'</td><td><strong>'+p.name+'</strong>'+timeInfo+'</td><td>'+p.weight.toLocaleString()+' g</td><td><div style="display:flex;gap:4px;"><button class="btn btn-primary btn-sm" onclick="startThaw('+p.id+',\''+p.barcode+'\')">🔄 เริ่มละลาย</button><button class="btn btn-outline btn-sm" onclick="removeFromQueue('+p.id+')">✕ นำออก</button></div></td></tr>';
+    }).join('');
+}
+
+function renderFrozenGrouped(products){
+    const el=document.getElementById('frozenGrouped');
+    document.getElementById('frozenCount').textContent=products.length;
+    if(!products.length){el.innerHTML='<div class="empty-state">❄️ ไม่มีสินค้าแช่แข็ง</div>';return;}
+    // Group by product_info name
+    const groups={};
+    products.forEach(p=>{
+        const key=p.name||'ไม่ระบุ';
+        if(!groups[key])groups[key]=[];
+        groups[key].push(p);
+    });
+    let html='';
+    Object.keys(groups).sort().forEach(name=>{
+        const items=groups[name];
+        html+='<details class="product-group"><summary><span>📦 '+name+'</span><span class="group-count">'+items.length+' รายการ</span></summary><div class="group-content"><div class="table-wrapper"><table><thead><tr><th>Barcode</th><th>น้ำหนัก</th><th>ราคา</th><th>MFG</th><th>Loyverse</th><th>แช่มา</th><th>จัดการ</th></tr></thead><tbody>';
+        items.forEach(p=>{
+            const timeInfo=p.time_in_status?'<div style="font-size:11px;color:var(--text-secondary);">'+p.time_in_status.elapsed_display+'</div>':'';
+            const syncBadge=p.loyverse_synced?'<span class="status-badge status-synced">🟢</span>':'<span class="status-badge status-pending">🟡</span>';
+            html+='<tr><td style="font-family:monospace;font-weight:700;">'+p.barcode+'</td><td>'+p.weight.toLocaleString()+' g</td><td style="color:var(--success);font-weight:700;">฿'+p.selling_price.toLocaleString()+'</td><td style="font-size:11px;color:var(--text-secondary);">'+p.mfg+'</td><td>'+p.loyverse_sku+' '+syncBadge+'</td><td>'+timeInfo+'</td><td><button class="btn btn-primary btn-sm" onclick="startThaw('+p.id+',\''+p.barcode+'\')">🔄 เริ่มละลาย</button></td></tr>';
+        });
+        html+='</tbody></table></div></div></details>';
+    });
+    el.innerHTML=html;
+}
+
+function renderUpcoming(items){
+    var card=document.getElementById('upcomingCard');
+    var el=document.getElementById('upcomingContainer');
+    var cnt=document.getElementById('upcomingCount');
+    if(!items||!items.length){card.style.display='none';return;}
+    card.style.display='block';
+    cnt.textContent=items.length;
+    var now=new Date();
+    el.innerHTML=items.map(function(p){
+        var endAt=p.freeze_end_at?new Date(p.freeze_end_at):null;
+        var remainMs=endAt?endAt.getTime()-now.getTime():0;
+        var remainHrs=Math.max(0,remainMs/3600000);
+        var isPast=remainMs<=0;
+        var hrs=Math.floor(remainHrs);
+        var mins=Math.floor((remainHrs-hrs)*60);
+        var remainLabel=hrs+'ชม.'+(mins>0?' '+mins+'น.':'');
+        var statusColor=isPast?'var(--success)':'var(--info)';
+        var statusText=isPast?'✅ ถึงเวลาละลาย':'⏳ อีก '+remainLabel;
+        var endStr=endAt?fmtDate(endAt.toISOString().slice(0,10))+' '+String(endAt.getHours()).padStart(2,'0')+':'+String(endAt.getMinutes()).padStart(2,'0'):'-';
+        return '<div style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:var(--card-soft);border:1px solid '+(isPast?'var(--success)':'var(--border)')+';border-radius:8px;margin-bottom:8px;flex-wrap:wrap;">'+
+            '<div style="font-family:monospace;font-weight:700;font-size:12px;min-width:120px;">'+p.barcode+'</div>'+
+            '<div style="flex:1;min-width:100px;"><div style="font-weight:600;font-size:13px;">'+(p.name||'-')+'</div><div style="font-size:11px;color:var(--text-secondary);">'+p.weight+'g · ฿'+p.selling_price+'</div></div>'+
+            '<div style="text-align:right;min-width:140px;"><div style="font-size:12px;color:var(--text-secondary);">📅 '+endStr+'</div><div style="font-size:13px;font-weight:700;color:'+statusColor+'">'+statusText+'</div></div>'+
+            (isPast?'<div><button class="btn btn-success btn-sm" onclick="startThaw('+p.id+',\''+p.barcode+'\')">🔄 เริ่มละลาย</button></div>':'')+
+        '</div>';
+    }).join('');
+}
+
+function renderProcessing(expired){
+    const sec=document.getElementById('processingSection');
+    const tbl=document.getElementById('processingTable');
+    if(!expired.length){sec.style.display='none';return;}
+    sec.style.display='block';
+    tbl.innerHTML='<div class="table-wrapper"><table><thead><tr><th>Barcode</th><th>สินค้า</th><th>น้ำหนัก</th><th>จัดการ</th></tr></thead><tbody>'+
+    expired.map(p=>'<tr><td style="font-family:monospace;font-weight:700;">'+p.barcode+'</td><td>'+p.name+'</td><td>'+p.weight.toLocaleString()+' g</td><td><div style="display:flex;gap:4px;"><button class="btn btn-warning btn-sm" onclick="processItem('+p.id+',\'process\')">🔄 แปรรูป</button><button class="btn btn-outline btn-sm" onclick="processItem('+p.id+',\'donate\')">🎁 บริจาค</button><button class="btn btn-danger btn-sm" onclick="processItem('+p.id+',\'dispose\')">🗑️ ทิ้ง</button></div></td></tr>'
+    ).join('')+'</tbody></table></div>';
+}
+
+async function processItem(id,action){
+    const labels={process:'แปรรูป',donate:'บริจาค',dispose:'ทิ้ง'};
+    if(!confirm('ยืนยัน'+labels[action]+'สินค้า?'))return;
+    // Use pull-from-display with reason
+    const fd=new FormData();
+    fd.append('product_id',id);
+    fd.append('reason',labels[action]);
+    try{
+        const r=await fetch('/api/pull-from-display/',{method:'POST',body:fd});
+        const d=await r.json();
+        if(d.success){showToast('success',d.message);loadDashboard();}
+        else showToast('error',d.message);
+    }catch(e){showToast('error','เกิดข้อผิดพลาด');}
+}
+
+// SOLD ITEMS
+function renderSold(items){
+    const sec=document.getElementById('soldSection');
+    const tbl=document.getElementById('soldTable');
+    const cnt=document.getElementById('soldCount');
+    if(!items||!items.length){sec.style.display='none';return;}
+    sec.style.display='block';
+    cnt.textContent=items.length;
+    const byDate={};
+    items.forEach(it=>{
+        const d=it.receipt_date.split(' ')[0];
+        if(!byDate[d])byDate[d]=[];
+        byDate[d].push(it);
+    });
+    let html='<div class="table-wrapper"><table><thead><tr><th>วันที่ขาย</th><th>Barcode</th><th>สินค้า</th><th>จำนวน</th><th>ราคาขาย</th><th>กำไร</th></tr></thead><tbody>';
+    Object.keys(byDate).sort().reverse().forEach(date=>{
+        byDate[date].forEach((it,i)=>{
+            const profitColor=it.profit>=0?'var(--success)':'var(--danger)';
+            const sign=it.profit>=0?'+':'';
+            const price=typeof it.selling_price==='number'?it.selling_price:parseFloat(it.selling_price)||0;
+            const profit=typeof it.profit==='number'?it.profit:parseFloat(it.profit)||0;
+            html+='<tr><td'+(i===0?' rowspan="'+byDate[date].length+'" style="font-weight:700;vertical-align:top;border-right:2px solid var(--border)"':' style="display:none"')+'>'+date+'</td>';
+            html+='<td style="font-family:monospace;font-size:11px">'+(it.barcode||'-')+'</td>';
+            html+='<td>'+it.name+'</td>';
+            html+='<td>'+it.quantity+'</td>';
+            html+='<td style="color:var(--info);font-weight:700">฿'+price.toLocaleString()+'</td>';
+            html+='<td style="color:'+profitColor+';font-weight:700">'+sign+'฿'+profit.toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:0})+'</td>';
+            html+='</tr>';
+        });
+    });
+    html+='</tbody></table></div>';
+    tbl.innerHTML=html;
+}
+
+// ACTIONS
+function startThaw(id,name){currentThawProductId=id;document.getElementById('thawProductName').textContent=name;openModal('thawModal');}
+async function confirmThaw(){
+    if(!currentThawProductId)return;
+    const fd=new FormData();
+    fd.append('product_id',currentThawProductId);
+    fd.append('thaw_duration_hours',document.getElementById('thawDuration').value);
+    try{const r=await fetch('/api/start-thaw/',{method:'POST',body:fd});const d=await r.json();if(d.success){showToast('success',d.message);closeModal('thawModal');loadDashboard();}else showToast('error',d.message);}catch(e){showToast('error','เกิดข้อผิดพลาด');}
+}
+function openDisplayModal(id,name){currentDisplayProductId=id;currentDisplayFromPending=false;document.getElementById('displayProductName').textContent=name;openModal('displayModal');}
+async function confirmDisplay(){
+    if(!currentDisplayProductId)return;
+    const fd=new FormData();
+    fd.append('product_id',currentDisplayProductId);
+    fd.append('display_days',document.getElementById('displayDays').value);
+    const url=currentDisplayFromPending?'/api/set-product-status/':'/api/complete-thaw/';
+    if(currentDisplayFromPending)fd.append('status','display');
+    try{const r=await fetch(url,{method:'POST',body:fd});const d=await r.json();if(d.success){showToast('success',d.message);closeModal('displayModal');loadDashboard();}else showToast('error',d.message);}catch(e){showToast('error','เกิดข้อผิดพลาด');}
+}
+async function pullFromDisplay(id,name){
+    if(!confirm('นำ "'+name+'" กลับแช่แข็ง?'))return;
+    const fd=new FormData();fd.append('product_id',id);fd.append('reason','manually');
+    try{const r=await fetch('/api/pull-from-display/',{method:'POST',body:fd});const d=await r.json();if(d.success){showToast('success',d.message);loadDashboard();}else showToast('error',d.message);}catch(e){showToast('error','เกิดข้อผิดพลาด');}
+}
+async function removeFromQueue(id){
+    if(!confirm('นำสินค้าออกจากคิว?'))return;
+    const fd=new FormData();fd.append('product_id',id);fd.append('reason','remove');
+    try{const r=await fetch('/api/pull-from-display/',{method:'POST',body:fd});const d=await r.json();if(d.success){showToast('success',d.message);loadDashboard();}else showToast('error',d.message);}catch(e){showToast('error','เกิดข้อผิดพลาด');}
+}
+async function checkAlerts(){
+    try{const r=await fetch('/api/auto-rotation-check/');const d=await r.json();if(d.success){if(d.alerts.length===0)showToast('success','✅ ไม่มีแจ้งเตือน');else{showToast('info','🔍 พบ '+d.alerts.length+' แจ้งเตือน');renderAlerts(d.alerts);}}}catch(e){showToast('error','เกิดข้อผิดพลาด');}
+}
+
+// ADD PRODUCT MODAL
+async function openAddProductModal(){
+    try{const r=await fetch('/api/freeze-available-products/');const d=await r.json();if(d.success&&d.products){allProducts=d.products;filterProducts();}}catch(e){}
+    document.getElementById('barcodeSearch').value='';document.getElementById('barcodeSearch').focus();
+    openModal('addProductModal');
+}
+function filterProducts(){
+    const term=(document.getElementById('barcodeSearch').value.trim().toLowerCase());
+    const sel=document.getElementById('addProductSelect');sel.innerHTML='';
+    let filtered=allProducts;
+    if(term)filtered=allProducts.filter(p=>p.barcode.toLowerCase().includes(term)||p.name.toLowerCase().includes(term));
+    if(!term){const o=document.createElement('option');o.value='';o.textContent='-- เลือก ('+allProducts.length+') --';sel.appendChild(o);}
+    filtered.forEach(p=>{const o=document.createElement('option');o.value=p.id;o.textContent=p.barcode+' | '+p.name+' '+p.weight+'g ฿'+p.selling_price+' ['+p.status+']';sel.appendChild(o);});
+    document.getElementById('filteredCount').textContent=filtered.length;
+}
+function toggleAddProductOptions(){
+    const st=document.getElementById('addProductStatus').value;
+    document.getElementById('addThawGroup').style.display=st==='thawing'?'block':'none';
+    document.getElementById('addDisplayGroup').style.display=st==='display'?'block':'none';
+    document.getElementById('addFreezeGroup').style.display=st==='frozen'?'block':'none';
+    document.getElementById('addFreezeResult').style.display=st==='frozen'?'block':'none';
+    if(st==='frozen')updateModalFreezeCalc();
+}
+function onAddProductSelect(){
+    const sel=document.getElementById('addProductSelect');
+    const pid=sel.value;
+    if(!pid)return;
+    const prod=allProducts.find(p=>String(p.id)===String(pid));
+    if(prod&&prod.weight){document.getElementById('addFreezeWeight').value=prod.weight;updateModalFreezeCalc();}
+}
+function updateModalFreezeCalc(){
+    var wf=document.getElementById('addFreezeWeight');const w=parseFloat(wf?wf.value:'1000')||1000;
+    const t=parseFloat(document.getElementById('addFreezerType').value)||-8;
+    const initTemp=5,freezePt=-1.5,tgt=t;
+    const tCool=(t===-18?2.5:5)*Math.pow(w/1000,0.67);
+    const tFreeze=(t===-18?3:6)*Math.pow(w/1000,0.67);
+    const totalHours=Math.ceil(tCool+tFreeze);
+    const el=document.getElementById('addFreezeResult');
+    if(!el)return;
+    el.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;">'+
+        '<div style="font-size:13px;color:var(--text-secondary)">⏱️ เวลาที่ต้องแช่</div>'+
+        '<div style="font-size:22px;font-weight:800;color:var(--info)">~'+totalHours+' ชม.</div></div>'+
+    '<div style="font-size:11px;color:var(--text-secondary);margin-top:4px;">น้ำหนัก '+w+'g → ตู้ '+t+'°C | ผ่านการเย็นตัว ~'+Math.ceil(tCool)+'ชม. + แข็งตัว ~'+Math.ceil(tFreeze)+'ชม.</div>';
+}
+async function confirmAddProduct(){
+    const pid=document.getElementById('addProductSelect').value;
+    const st=document.getElementById('addProductStatus').value;
+    if(!pid){showToast('error','กรุณาเลือกสินค้า');return;}
+    if(st==='frozen'){
+        var prod=allProducts.find(function(p){return String(p.id)===String(pid)});
+        if(prod){closeModal('addProductModal');openFreezeModal(pid,prod.name,prod.weight);}
+        else{showToast('error','ไม่พบสินค้า');}
+        return;
+    }
+    const fd=new FormData();fd.append('product_id',pid);fd.append('status',st);
+    if(st==='thawing')fd.append('thaw_duration_hours',document.getElementById('addThawHours').value||'24');
+    if(st==='display')fd.append('display_days',document.getElementById('addDisplayDays').value||'3');
+    try{const r=await fetch('/api/add-to-queue/',{method:'POST',body:fd});const d=await r.json();if(d.success){showToast('success',d.message);closeModal('addProductModal');loadDashboard();}else showToast('error',d.message);}catch(e){showToast('error','เกิดข้อผิดพลาด');}
+}
+
+// BARCODE SCANNER
+function setScanStatus(status){
+    scanTargetStatus=status;
+    document.querySelectorAll('.btn-scan').forEach(b=>{b.style.border='2px solid transparent';b.style.opacity='0.5';b.className=b.className.replace(/btn-(primary|success|danger)/,'btn-outline');});
+    const map={frozen:'scanFrozenBtn',thawing:'scanThawingBtn',display:'scanDisplayBtn'};
+    const btn=document.getElementById(map[status]);
+    if(btn){btn.style.border='2px solid var(--accent)';btn.style.opacity='1';btn.className=btn.className.replace('btn-outline','btn-primary');}
+    document.getElementById('scanStatus').textContent='สถานะที่จะเปลี่ยน: '+{frozen:'❄️ แช่แข็ง',thawing:'🔄 ละลาย',display:'🛒 วางขาย'}[status];
+    document.getElementById('barcodeScanner').focus();
+}
+async function scanBarcode(){
+    const barcode=document.getElementById('barcodeScanner').value.trim();
+    if(!barcode)return;
+    if(!scanTargetStatus){showToast('error','เลือกสถานะก่อนสแกน');return;}
+    const prod=allProducts.find(p=>p.barcode===barcode);
+    if(!prod){showToast('error','ไม่พบ barcode: '+barcode);document.getElementById('barcodeScanner').value='';document.getElementById('barcodeScanner').focus();return;}
+    const fd=new FormData();fd.append('product_id',prod.id);fd.append('status',scanTargetStatus);
+    if(scanTargetStatus==='thawing')fd.append('thaw_duration_hours','24');
+    if(scanTargetStatus==='display')fd.append('display_days','3');
+    try{const r=await fetch('/api/add-to-queue/',{method:'POST',body:fd});const d=await r.json();if(d.success){showToast('success',d.message);document.getElementById('scanStatus').textContent='✅ '+d.message;}else{showToast('error',d.message);document.getElementById('scanStatus').textContent='❌ '+d.message;}}catch(e){showToast('error','เกิดข้อผิดพลาด');}
+    document.getElementById('barcodeScanner').value='';document.getElementById('barcodeScanner').focus();
+    loadDashboard();
+}
+
+function renderFreezingStatus(frozenItems){
+    const el=document.getElementById('freezingStatusContainer');
+    const cnt=document.getElementById('freezingStatusCount');
+    if(!frozenItems||!frozenItems.length){el.innerHTML='<div class="empty-state">ไม่มีสินค้ากำลังแช่แข็ง</div>';cnt.textContent='0';return;}
+    cnt.textContent=frozenItems.length;
+    const freezerTemp=-8;
+    const initTemp=5,freezePt=-1.5;
+    function _parseDate(s){
+        if(!s)return new Date();
+        if(s instanceof Date)return s;
+        var m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})/);
+        if(m)return new Date(parseInt(m[3]),parseInt(m[2])-1,parseInt(m[1]),parseInt(m[4]),parseInt(m[5]));
+        var m2=s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if(m2)return new Date(parseInt(m2[1]),parseInt(m2[2])-1,parseInt(m2[3]));
+        return new Date(s);
+    }
+    var sorted=frozenItems.slice().sort(function(a,b){
+        var da=_parseDate(a.mfg||a.entered_freeze_at);
+        var db=_parseDate(b.mfg||b.entered_freeze_at);
+        return db-da;
+    });
+    var shown=sorted.slice(0,5);
+    el.innerHTML=shown.map(p=>{
+        const w=p.weight||1000;
+        const mfg=_parseDate(p.mfg||p.entered_freeze_at);
+        const now=new Date();
+        const hrsElapsed=(now-mfg)/(1000*60*60);
+        const tCool=(freezerTemp===-18?2.5:5)*Math.pow(w/1000,0.67);
+        const tFreeze=(freezerTemp===-18?3:6)*Math.pow(w/1000,0.67);
+        const totalHours=tCool+tFreeze;
+        let curTemp,frozenPct;
+        if(hrsElapsed<=0){curTemp=initTemp;frozenPct=0;}
+        else if(hrsElapsed<tCool){curTemp=initTemp-(initTemp-freezePt)*(hrsElapsed/tCool);frozenPct=0;}
+        else if(hrsElapsed<tCool+tFreeze){curTemp=freezePt;frozenPct=Math.round(((hrsElapsed-tCool)/tFreeze)*100);}
+        else{curTemp=freezerTemp;frozenPct=100;}
+        curTemp=Math.max(freezerTemp,Math.min(initTemp,curTemp));
+        frozenPct=Math.min(100,Math.max(0,frozenPct));
+        let status,statusColor;
+        if(frozenPct>=90){status='✅ พร้อม';statusColor='var(--success)';}
+        else if(frozenPct>=50){status='🔄 กำลังแข็ง';statusColor='var(--warning)';}
+        else if(curTemp>0){status='⚠️ ยังสด';statusColor='var(--danger)';}
+        else{status='🔄 เย็นตัว';statusColor='var(--warning)';}
+        const tempNorm=Math.max(0,Math.min(1,(curTemp-freezerTemp)/(initTemp-freezerTemp)));
+        const barR=Math.round(tempNorm*255),barB=Math.round((1-tempNorm)*255);
+        const barColor='rgb('+barR+',80,'+barB+')';
+        const remaining=Math.max(0,totalHours-hrsElapsed);
+        return '<div style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:var(--card-soft);border:1px solid var(--border);border-radius:8px;margin-bottom:8px;flex-wrap:wrap;">'+
+            '<div style="font-family:monospace;font-weight:700;font-size:12px;min-width:120px;">'+p.barcode+'</div>'+
+            '<div style="flex:1;min-width:100px;"><div style="font-weight:600;font-size:13px;">'+(p.name||'-')+'</div><div style="font-size:11px;color:var(--text-secondary);">'+w+'g · '+Math.round(hrsElapsed)+'ชม. / ~'+Math.round(totalHours)+'ชม.</div></div>'+
+            '<div style="width:120px;"><div style="background:#1e293b;border-radius:6px;height:14px;overflow:hidden;position:relative;"><div style="height:100%;width:'+frozenPct+'%;background:linear-gradient(90deg,#38bdf8,#1e40af);border-radius:6px;transition:width 0.3s;"></div><div style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#fff;">'+frozenPct+'%</div></div></div>'+
+            '<div style="text-align:center;min-width:60px;"><div style="font-size:16px;font-weight:800;color:'+barColor+'">'+curTemp.toFixed(1)+'°C</div></div>'+
+            '<div style="min-width:70px;text-align:right;"><span style="font-size:11px;font-weight:600;color:'+statusColor+'">'+status+'</span>'+(remaining>0?'<div style="font-size:10px;color:var(--text-secondary);">เหลือ ~'+Math.round(remaining)+'ชม.</div>':'')+'</div>'+
+        '</div>';
+    }).join('');
+}
+function fmtDate(s){if(!s)return '-';var d;if(s instanceof Date)d=s;else{var m=String(s).match(/(\d{4})-(\d{2})-(\d{2})/);if(m)d=new Date(parseInt(m[1]),parseInt(m[2])-1,parseInt(m[3]));else d=new Date(s);}if(isNaN(d.getTime()))return s;var p=function(n){return String(n).padStart(2,'0');};return p(d.getDate())+'/'+p(d.getMonth()+1)+'/'+d.getFullYear();}
+var fdProductId=null,fdProductName='',fdWeight=1000;
+function startFreezeFromPending(id,name,weight){
+    fdProductId=id;fdProductName=name;fdWeight=weight||1000;
+    document.getElementById('fdProductName').textContent=name;
+    document.getElementById('fdProductWeight').textContent=weight?weight+'g':'';
+    document.getElementById('fdFreezerType').value='-8';
+    document.getElementById('fdFreezerTemp').value='-8';
+    document.getElementById('fdTimeValue').value=24;
+    document.getElementById('fdTimeUnit').value='hr';
+    document.getElementById('fdTimeSlider').value=1440;
+    document.getElementById('fdEndDate').value='';
+    updateFreezeDurationCalc();
+    openModal('freezeDurationModal');
+}
+function openFreezeModal(id,name,weight){
+    fdProductId=id;fdProductName=name;fdWeight=weight||1000;
+    document.getElementById('fdProductName').textContent=name;
+    document.getElementById('fdProductWeight').textContent=weight?weight+'g':'';
+    document.getElementById('fdFreezerType').value='-8';
+    document.getElementById('fdFreezerTemp').value='-8';
+    document.getElementById('fdTimeValue').value=24;
+    document.getElementById('fdTimeUnit').value='hr';
+    document.getElementById('fdTimeSlider').value=1440;
+    document.getElementById('fdEndDate').value='';
+    updateFreezeDurationCalc();
+    openModal('freezeDurationModal');
+}
+function _syncTimeFromSlider(){
+    var mins=parseInt(document.getElementById('fdTimeSlider').value)||1440;
+    var unit=document.getElementById('fdTimeUnit').value;
+    if(unit==='min')document.getElementById('fdTimeValue').value=mins;
+    else if(unit==='hr')document.getElementById('fdTimeValue').value=Math.round(mins/60*10)/10;
+    else document.getElementById('fdTimeValue').value=Math.round(mins/1440*10)/10;
+}
+function _syncTimeFromInput(){
+    var unit=document.getElementById('fdTimeUnit').value;
+    var val=parseFloat(document.getElementById('fdTimeValue').value)||0;
+    var mins=0;
+    if(unit==='min')mins=Math.round(val);
+    else if(unit==='hr')mins=Math.round(val*60);
+    else mins=Math.round(val*1440);
+    document.getElementById('fdTimeSlider').value=Math.min(10080,Math.max(10,mins));
+}
+function _freezeCalcMins(){
+    var unit=document.getElementById('fdTimeUnit').value;
+    var val=parseFloat(document.getElementById('fdTimeValue').value)||0;
+    if(unit==='min')return Math.round(val);
+    if(unit==='hr')return Math.round(val*60);
+    if(unit==='day')return Math.round(val*24*60);
+    return 0;
+}
+function _fmtDateTimeShort(d){
+    var p=function(n){return String(n).padStart(2,'0');};
+    return p(d.getDate())+'/'+p(d.getMonth()+1)+'/'+d.getFullYear()+' '+p(d.getHours())+':'+p(d.getMinutes());
+}
+function _fmtMinsLabel(mins){
+    if(mins>=1440){var d=Math.floor(mins/1440);var rh=mins%1440;return d+' วัน'+(rh>0?' '+Math.floor(rh/60)+' ชม.':'');}
+    if(mins>=60){var h=Math.floor(mins/60);return h+' ชม.'+(mins%60>0?' '+mins%60+' น.':'');}
+    return mins+' นาที';
+}
+function updateFreezeDurationCalc(){
+    var mins=_freezeCalcMins();
+    var t=parseFloat(document.getElementById('fdFreezerTemp').value)||-8;
+    var w=fdWeight;
+    var endInput=document.getElementById('fdEndDate').value;
+    var now=new Date();
+    if(endInput){
+        var endAt=new Date(endInput);
+        if(!isNaN(endAt.getTime())&&endAt>now){
+            mins=Math.round((endAt-now)/(60*1000));
+            var unit=document.getElementById('fdTimeUnit').value;
+            if(unit==='min')document.getElementById('fdTimeValue').value=mins;
+            else if(unit==='hr')document.getElementById('fdTimeValue').value=Math.round(mins/60*10)/10;
+            else document.getElementById('fdTimeValue').value=Math.round(mins/1440*10)/10;
+            _syncTimeFromInput();
+        }
+    }
+    var hrs=mins/60;
+    var initTemp=5,freezePt=-1.5,tgt=t;
+    var tCool=(t===-18?2.5:5)*Math.pow(w/1000,0.67);
+    var tFreeze=(t===-18?3:6)*Math.pow(w/1000,0.67);
+    var totalNeededHrs=tCool+tFreeze;
+    var totalNeededMins=Math.ceil(totalNeededHrs*60);
+    var curTemp,frozenPct;
+    if(hrs<=0){curTemp=initTemp;frozenPct=0;}
+    else if(hrs<tCool){
+        curTemp=initTemp-(initTemp-freezePt)*(hrs/tCool);
+        frozenPct=0;
+    }else if(hrs<tCool+tFreeze){
+        var frac=(hrs-tCool)/tFreeze;
+        frozenPct=Math.round(frac*100);
+        curTemp=freezePt+(tgt-freezePt)*frac*0.4;
+    }else{
+        curTemp=tgt;frozenPct=100;
+    }
+    curTemp=Math.max(tgt,Math.min(initTemp,curTemp));
+    frozenPct=Math.min(100,Math.max(0,frozenPct));
+    var ready=mins>=totalNeededMins;
+    var status,statusColor;
+    if(ready){status='✅ แช่แข็งสมบูรณ์';statusColor='var(--success)';}
+    else if(frozenPct>=50){status='🔄 กำลังแข็งตัว';statusColor='var(--warning)';}
+    else{status='⚠️ ยังไม่พอ — ต้องแช่อีก ~'+(totalNeededMins-mins)+' นาที';statusColor='var(--danger)';}
+    var tempNorm=Math.max(0,Math.min(1,(curTemp-tgt)/(initTemp-tgt)));
+    var barR=Math.round(tempNorm*255),barB=Math.round((1-tempNorm)*255);
+    var barColor='rgb('+barR+',80,'+barB+')';
+    var doneAt=new Date(now.getTime()+mins*60000);
+    var needAt=new Date(now.getTime()+totalNeededMins*60000);
+    var minsLabel=_fmtMinsLabel(mins);
+    var el=document.getElementById('fdCalcResult');
+    el.innerHTML=
+        '<div style="text-align:center;margin-bottom:12px;">'+
+            (ready?
+                '<div style="font-size:24px;font-weight:800;color:var(--success);margin-bottom:4px;">✅ จะเสร็จ '+_fmtDateTimeShort(doneAt)+' น.</div>'+
+                '<div style="font-size:12px;color:var(--text-secondary);">แข็งตัว '+w+'g ที่ '+tgt+'°C ใช้เวลา '+minsLabel+'</div>':
+                '<div style="font-size:20px;font-weight:800;color:var(--danger);margin-bottom:4px;">⚠️ ต้องแช่ถึง '+_fmtDateTimeShort(needAt)+' น.</div>'+
+                '<div style="font-size:12px;color:var(--text-secondary);">แช่ '+minsLabel+' ยังไม่พอ — ต้องอีก ~'+(totalNeededMins-mins)+' นาที</div>')+
+        '</div>'+
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">'+
+            '<span style="font-weight:700;color:'+statusColor+'">'+status+'</span>'+
+            '<span style="font-size:22px;font-weight:800;color:'+barColor+'">'+curTemp.toFixed(1)+'°C</span></div>'+
+    '<div style="background:#1e293b;border-radius:8px;height:20px;overflow:hidden;position:relative;margin-bottom:8px;">'+
+        '<div style="height:100%;width:'+frozenPct+'%;background:linear-gradient(90deg,#38bdf8,#1e40af);border-radius:8px;transition:width 0.3s;"></div>'+
+        '<div style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,0.5)">'+frozenPct+'% แข็งตัว</div></div>'+
+    '<div style="font-size:11px;color:var(--text-secondary);display:flex;gap:12px;flex-wrap:wrap;">'+
+        '<span>❄️ ตู้ '+tgt+'°C</span><span>⚖️ '+w+'g</span><span>⏱️ '+minsLabel+'</span>'+
+    '</div>';
+}
+function confirmFreezeDuration(){
+    if(!fdProductId){showToast('error','ไม่พบรหัสสินค้า');return;}
+    var mins=_freezeCalcMins();
+    var freezerTemp=parseFloat(document.getElementById('fdFreezerTemp').value)||-8;
+    var endInput=document.getElementById('fdEndDate').value;
+    var fd=new FormData();
+    fd.append('product_id',fdProductId);
+    fd.append('status','frozen');
+    fd.append('freeze_duration_minutes',mins);
+    fd.append('freeze_target_temp',freezerTemp);
+    if(endInput){
+        var endAt=new Date(endInput);
+        if(!isNaN(endAt.getTime())){
+            fd.append('freeze_end_at',endAt.toISOString());
+        }
+    }else{
+        // Auto-calculate end time from now + mins
+        var autoEnd=new Date(Date.now()+mins*60000);
+        fd.append('freeze_end_at',autoEnd.toISOString());
+    }
+    fetch('/api/add-to-queue/',{method:'POST',body:fd})
+    .then(function(r){return r.json()})
+    .then(function(d){
+        if(d.success){showToast('success',d.message);closeModal('freezeDurationModal');loadDashboard();}
+        else showToast('error',d.message);
+    })
+    .catch(function(){showToast('error','เกิดข้อผิดพลาด')});
+}
+function calcFreezing(){
+    const w=parseFloat(document.getElementById('freezeWeight').value)||1000;
+    const t=parseFloat(document.getElementById('freezeType').value)||-8;
+    const mins=parseFloat(document.getElementById('freezeHours').value)||0;
+    const hrs=mins/60;
+    const el=document.getElementById('freezeResult');
+    // Simplified freezing model
+    // Meat: 5°C → freezing point (-1.5°C) → subcool to freezer temp
+    const initTemp=5, freezePt=-1.5, tgt=t;
+    // Time to reach freezing point (weight-dependent)
+    const tCool=(t===-18?2.5:5)*Math.pow(w/1000,0.67);
+    // Time to fully freeze (from freezing point)
+    const tFreeze=(t===-18?3:6)*Math.pow(w/1000,0.67);
+    let curTemp, frozenPct;
+    if(hrs<=0){curTemp=initTemp;frozenPct=0;}
+    else if(hrs<tCool){
+        curTemp=initTemp-(initTemp-freezePt)*(hrs/tCool);
+        frozenPct=0;
+    }else if(hrs<tCool+tFreeze){
+        curTemp=freezePt;
+        frozenPct=Math.round(((hrs-tCool)/tFreeze)*100);
+    }else{
+        const elapsed=hrs-tCool-tFreeze;
+        const subCoolTime=tCool*2;
+        curTemp=freezePt-(freezePt-tgt)*Math.min(1,elapsed/subCoolTime);
+        frozenPct=100;
+    }
+    curTemp=Math.max(tgt,Math.min(initTemp,curTemp));
+    frozenPct=Math.min(100,Math.max(0,frozenPct));
+    // Status
+    let status,statusColor;
+    if(frozenPct>=90){status='✅ แช่แข็งสมบูรณ์ — พร้อมเก็บ';statusColor='var(--info)';}
+    else if(frozenPct>=50){status='🔄 กำลังแข็งตัว — ยังไม่พร้อม';statusColor='var(--warning)';}
+    else if(curTemp>0){status='⚠️ ยังเป็นเนื้อสด — ต้องแช่ต่อ';statusColor='var(--danger)';}
+    else{status='🔄 กำลังเย็นตัว — ใกล้แข็ง';statusColor='var(--warning)';}
+    // Thaw estimate
+    let thawHours=0;
+    if(frozenPct>50){thawHours=Math.round(w/1000*12*100)/100;}
+    // Color gradient: blue(cold) → orange(thawed)
+    const tempNorm=Math.max(0,Math.min(1,(curTemp-tgt)/(initTemp-tgt)));
+    const r=Math.round(tempNorm*255);
+    const b=Math.round((1-tempNorm)*255);
+    const g=Math.round((1-Math.abs(tempNorm-0.5)*2)*100);
+    var barColor='rgb('+r+','+g+','+b+')';
+    el.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'+
+        '<div style="font-size:15px;font-weight:700;color:'+statusColor+'">'+status+'</div>'+
+        '<div style="font-size:28px;font-weight:800;color:'+barColor+'">'+curTemp.toFixed(1)+'°C</div></div>'+
+    '<div style="background:#1e293b;border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;position:relative;">'+
+        '<div style="height:100%;width:'+frozenPct+'%;background:linear-gradient(90deg,#38bdf8,#1e40af);border-radius:8px;transition:width 0.3s;"></div>'+
+        '<div style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,0.5)">'+frozenPct+'% แข็งตัว</div></div>'+
+    '<div style="display:flex;gap:16px;font-size:12px;color:var(--text-secondary);">'+
+        '<span>❄️ อุณหภูมิเป้าหมาย: '+tgt+'°C</span>'+
+        '<span>⏱️ เวลาที่แช่: '+mins+' นาที</span>'+
+        '<span>⚖️ น้ำหนัก: '+w.toLocaleString()+'g</span>'+
+        (thawHours>0?'<span>🔄 ต้องละลาย ~'+thawHours+' ชม.</span>':'')+'</div>'+
+    '<div style="margin-top:8px;display:flex;gap:4px;align-items:center;font-size:11px;">'+
+        '<span style="color:#38bdf8">❄️ เย็น</span>'+
+        '<div style="flex:1;height:6px;border-radius:3px;background:linear-gradient(90deg,#38bdf8,#1e40af,#6366f1,#f59e0b,#ef4444)"></div>'+
+        '<span style="color:#ef4444">🌡️ อุ่น</span></div>';
+}
+let frozenExpanded=true;
+function toggleAllFrozen(){
+    frozenExpanded=!frozenExpanded;
+    document.querySelectorAll('.product-group').forEach(g=>g.open=frozenExpanded);
+}
+
+// MODALS & TOAST
+function openModal(id){document.getElementById(id).classList.add('active');}
+function closeModal(id){document.getElementById(id).classList.remove('active');}
+document.addEventListener('click',function(e){if(e.target.classList.contains('modal-overlay'))e.target.classList.remove('active');});
+document.querySelectorAll('.modal-overlay').forEach(function(el){el.addEventListener('click',function(e){if(e.target===el)el.classList.remove('active');});});
+function showToast(type,msg){
+    const c=document.getElementById('toastContainer');
+    const t=document.createElement('div');t.className='toast '+type;
+    const icons={success:'✅',error:'❌',info:'ℹ️'};
+    t.innerHTML='<span>'+(icons[type]||'')+'</span><span>'+msg+'</span>';
+    c.appendChild(t);setTimeout(()=>t.remove(),4000);
+}
+</script>
+{% endblock %}

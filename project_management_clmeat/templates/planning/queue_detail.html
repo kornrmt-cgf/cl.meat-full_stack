@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% load static %}
+{% load user_permissions %}
+
+{% block title %}คิว #{{ entry.queue_position }} - CL.MEAT{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>🔀 คิวละลาย #{{ entry.queue_position }}</h1>
+    <div class="d-flex gap-3">
+        {% if can_edit %}
+        <a href="{% url 'planning:queue_edit' pk=entry.pk %}" class="btn btn-primary">✏️ แก้ไข</a>
+        {% endif %}
+        <a href="{% url 'planning:queue' %}" class="btn btn-outline">← กลับ</a>
+    </div>
+</div>
+
+<div class="detail-grid">
+    <div class="card">
+        <div class="card-header"><h4>📦 ข้อมูลสินค้า</h4></div>
+        <div class="card-body">
+            <table class="detail-table">
+                <tr><td>สินค้า:</td><td><strong>{{ entry.package.product.name }}</strong></td></tr>
+                <tr><td>น้ำหนัก:</td><td>{{ entry.package.weight }} กก.</td></tr>
+                <tr><td>บาร์โค้ด:</td><td><span class="font-mono">{{ entry.package.barcode|default:"-" }}</span></td></tr>
+                <tr><td>ล็อต:</td><td>{{ entry.package.batch.batch_number }}</td></tr>
+                <tr><td>สถานะแพ็กเกจ:</td><td><span class="status-badge status-{{ entry.package.current_state|lower }}">{{ entry.package.get_current_state_display }}</span></td></tr>
+                <tr><td>แผนงาน:</td><td>{% if entry.rotation_plan %}<a href="{% url 'planning:plan_detail' pk=entry.rotation_plan.pk %}">#{{ entry.rotation_plan.pk }}</a>{% else %}-{% endif %}</td></tr>
+            </table>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header"><h4>🔀 ข้อมูลคิว</h4></div>
+        <div class="card-body">
+            <table class="detail-table">
+                <tr><td>ตำแหน่งในคิว:</td><td><strong>#{{ entry.queue_position }}</strong></td></tr>
+                <tr><td>สถานะ:</td><td><span class="status-badge status-{{ entry.status|lower }}">{{ entry.get_status_display }}</span></td></tr>
+                <tr><td>กำหนดเริ่มละลาย:</td><td>{{ entry.planned_start_at|date:"d/m/Y H:i" }}</td></tr>
+                <tr><td>กำหนดพร้อมขาย:</td><td>{{ entry.target_ready_at|date:"d/m/Y H:i" }}</td></tr>
+                <tr><td>วันที่สร้าง:</td><td>{{ entry.created_at|date:"d/m/Y H:i" }}</td></tr>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Package Timeline -->
+<div class="card">
+    <div class="card-header"><h4>📊 ประวัติสินค้า</h4></div>
+    <div class="card-body">
+        {% with events=entry.package.rotation_events.all %}
+            {% if events %}
+            <div class="timeline">
+                {% for event in events %}
+                <div class="timeline-item">
+                    <div class="timeline-marker"></div>
+                    <strong>{{ event.from_state }}</strong> → <strong>{{ event.to_state }}</strong>
+                    <span class="text-muted text-xs" style="margin-left:8px;">{{ event.timestamp|date:"d/m/Y H:i" }}</span>
+                    {% if event.actor %}<span class="badge badge-viewer" style="margin-left:8px;">{{ event.actor }}</span>{% endif %}
+                    {% if event.reason %}<br><span class="text-xs text-muted">{{ event.reason }}</span>{% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="text-muted text-center" style="padding:20px;">ยังไม่มีประวัติ</div>
+            {% endif %}
+        {% endwith %}
+    </div>
+</div>
+{% endblock %}

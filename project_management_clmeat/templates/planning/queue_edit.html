@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}แก้ไขคิว #{{ entry.queue_position }} - CL.MEAT{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>✏️ แก้ไขคิว #{{ entry.queue_position }}</h1>
+    <a href="{% url 'planning:queue_detail' pk=entry.pk %}" class="btn btn-outline">← กลับ</a>
+</div>
+
+<div class="card form-container">
+    <div class="card-body">
+        <div class="alert alert-info mb-5">
+            <strong>ℹ️</strong> แก้ไขได้เฉพาะข้อมูลการกำหนดเวลาเท่านั้น — สถานะการดำเนินงานจะเปลี่ยนผ่านระบบเท่านั้น
+        </div>
+
+        <table class="detail-table mb-5" style="max-width:400px;">
+            <tr><td>สินค้า:</td><td><strong>{{ entry.package.product.name }}</strong></td></tr>
+            <tr><td>น้ำหนัก:</td><td>{{ entry.package.weight }} กก.</td></tr>
+            <tr><td>บาร์โค้ด:</td><td><span class="font-mono">{{ entry.package.barcode|default:"-" }}</span></td></tr>
+            <tr><td>สถานะ:</td><td><span class="status-badge status-{{ entry.status|lower }}">{{ entry.get_status_display }}</span></td></tr>
+        </table>
+
+        <form method="post">
+            {% csrf_token %}
+            <div class="form-group">
+                <label class="form-label">📅 กำหนดเริ่มละลาย</label>
+                <input type="datetime-local" name="planned_start_at" class="form-control"
+                       value="{{ entry.planned_start_at|date:'Y-m-d\TH:i' }}">
+            </div>
+            <div class="form-group">
+                <label class="form-label">📅 กำหนดพร้อมขาย</label>
+                <input type="datetime-local" name="target_ready_at" class="form-control"
+                       value="{{ entry.target_ready_at|date:'Y-m-d\TH:i' }}">
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary btn-lg">💾 บันทึก</button>
+                <a href="{% url 'planning:queue_detail' pk=entry.pk %}" class="btn btn-outline btn-lg">ยกเลิก</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

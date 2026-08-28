@@ -1,0 +1,81 @@
+{% load static %}{% load user_permissions %}
+<nav class="navbar">
+    <div class="navbar-inner">
+        <!-- Brand -->
+        <a class="navbar-brand" href="{% url 'dashboard:index' %}">
+            <span class="navbar-brand-icon">🥩</span>
+            <span>CL.MEAT</span>
+        </a>
+
+        {% if user.is_authenticated %}
+        <!-- Desktop Nav -->
+        <ul class="navbar-nav">
+            <li><a class="nav-link nav-link-worker" href="{% url 'worker:scan' %}">📱 โหมดพนักงาน</a></li>
+        </ul>
+        <ul class="navbar-nav-main">
+            <li><a class="nav-link" href="{% url 'dashboard:index' %}">📊 แดชบอร์ด</a></li>
+            <li><a class="nav-link" href="{% url 'inventory:package_list' %}">📦 คลังสินค้า</a></li>
+            <li><a class="nav-link" href="{% url 'planning:plan_list' %}">📋 แผนงาน</a></li>
+            <li><a class="nav-link" href="{% url 'planning:queue' %}">🔀 คิวละลาย</a></li>
+            <li><a class="nav-link" href="{% url 'operations:today' %}">📋 งานวันนี้</a></li>
+            {% if user.is_superuser or user|has_perm:"planning.change_rotationplan" %}
+            <li><a class="nav-link" href="{% url 'users:user_list' %}">👥 ผู้ใช้</a></li>
+            {% endif %}
+        </ul>
+
+        <!-- Theme Toggle -->
+        <button class="theme-toggle" onclick="ThemeManager.toggle()" title="เปลี่ยนธีม">🌙</button>
+
+        <!-- User Dropdown -->
+        <div class="navbar-user">
+            <button class="navbar-user-toggle">
+                <span>👤 {{ user.get_full_name|default:user.username }}</span>
+                {% if user.is_superuser %}
+                    <span class="badge badge-admin">ADMIN</span>
+                {% elif user.groups.first %}
+                    <span class="badge badge-{{ user.groups.first.name|lower }}">{{ user.groups.first.name }}</span>
+                {% endif %}
+                <span style="font-size:0.7em;">▾</span>
+            </button>
+            <div class="navbar-dropdown">
+                <a class="navbar-dropdown-item" href="{% url 'users:user_list' %}">👥 จัดการผู้ใช้</a>
+                <div class="navbar-dropdown-divider"></div>
+                <form method="post" action="{% url 'logout' %}">
+                    {% csrf_token %}
+                    <button type="submit" class="navbar-dropdown-item">🚪 ออกจากระบบ</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Mobile Hamburger -->
+        <button class="navbar-hamburger" aria-label="Menu">☰</button>
+
+        {% else %}
+        <ul class="navbar-nav-main">
+            <li><a class="nav-link" href="{% url 'login' %}">🔑 เข้าสู่ระบบ</a></li>
+        </ul>
+        <button class="theme-toggle" onclick="ThemeManager.toggle()" title="เปลี่ยนธีม">🌙</button>
+        {% endif %}
+    </div>
+</nav>
+
+{% if user.is_authenticated %}
+<!-- Mobile Nav Drawer -->
+<div class="navbar-mobile">
+    <a class="nav-link nav-link-worker" href="{% url 'worker:scan' %}">📱 โหมดพนักงาน</a>
+    <div class="navbar-dropdown-divider" style="margin:8px 0;"></div>
+    <a class="nav-link" href="{% url 'dashboard:index' %}">📊 แดชบอร์ด</a>
+    <a class="nav-link" href="{% url 'inventory:package_list' %}">📦 คลังสินค้า</a>
+    <a class="nav-link" href="{% url 'planning:plan_list' %}">📋 แผนงาน</a>
+    <a class="nav-link" href="{% url 'planning:queue' %}">🔀 คิวละลาย</a>
+    <a class="nav-link" href="{% url 'operations:today' %}">📋 งานวันนี้</a>
+    {% if user.is_superuser or user.has_perm.planning.change_rotationplan %}
+    <a class="nav-link" href="{% url 'users:user_list' %}">👥 ผู้ใช้</a>
+    {% endif %}
+    <div class="navbar-dropdown-divider" style="margin:8px 0;"></div>
+    <form method="post" action="{% url 'logout' %}" style="padding:0;">
+        {% csrf_token %}
+        <button type="submit" class="nav-link" style="width:100%;border:none;background:none;cursor:pointer;font-family:inherit;font-size:inherit;color:inherit;">🚪 ออกจากระบบ</button>
+    </form>
+</div>
+{% endif %}

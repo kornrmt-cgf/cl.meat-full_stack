@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block title %}แดชบอร์ด - CL.MEAT{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>📊 แดชบอร์ด</h1>
+</div>
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <h3>แพ็กเกจทั้งหมด</h3>
+        <p class="stat-value">{{ package_stats.total|default:"0" }}</p>
+    </div>
+    <div class="stat-card">
+        <h3>🧊 แช่แข็งอยู่</h3>
+        <p class="stat-value">{{ package_stats.frozen|default:"0" }}</p>
+    </div>
+    <div class="stat-card">
+        <h3>💧 กำลังละลาย</h3>
+        <p class="stat-value">{{ package_stats.thawing|default:"0" }}</p>
+    </div>
+    <div class="stat-card">
+        <h3>🛒 พร้อมขาย</h3>
+        <p class="stat-value">{{ package_stats.ready|default:"0" }}</p>
+    </div>
+    <div class="stat-card">
+        <h3>📋 แผนงาน</h3>
+        <p class="stat-value">{{ plan_stats.total|default:"0" }}</p>
+    </div>
+</div>
+
+<div class="dashboard-grid">
+    <div class="dashboard-section">
+        <h2>📋 งานวันนี้</h2>
+        {% if todays_tasks %}
+        <div class="task-list">
+            {% for task in todays_tasks %}
+            <div class="task-card">
+                <div class="task-time">{{ task.scheduled_at|date:"H:i" }}</div>
+                <div class="task-info">
+                    <span class="task-type">{{ task.get_task_type_display }}</span>
+                    <span class="task-package">{{ task.package.display_name }}</span>
+                </div>
+                <span class="status-badge status-{{ task.status|lower }}">{{ task.get_status_display }}</span>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <div class="empty-state-icon">📋</div>
+            <h3>ไม่มีงานวันนี้</h3>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="dashboard-section">
+        <h2>⚠️ งานเกินกำหนด</h2>
+        {% if overdue_tasks %}
+        <div class="task-list">
+            {% for task in overdue_tasks %}
+            <div class="task-card task-overdue">
+                <div class="task-time">{{ task.scheduled_at|date:"H:i" }}</div>
+                <div class="task-info">
+                    <span class="task-type">{{ task.get_task_type_display }}</span>
+                    <span class="task-package">{{ task.package.display_name }}</span>
+                </div>
+                <span class="status-badge status-overdue">เกินกำหนด</span>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <div class="empty-state-icon">✅</div>
+            <h3>ไม่มีงานเกินกำหนด</h3>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

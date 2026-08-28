@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+
+{% block title %}{% if form.instance.pk %}แก้ไขแม่แบบ{% else %}สร้างแม่แบบ{% endif %} - CL.MEAT TaskManager{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto space-y-6">
+    <!-- Header -->
+    <div>
+        <a href="{% url 'scheduling:template-list' %}" class="text-dark-muted hover:text-dark-text text-sm mb-3 inline-flex items-center gap-1 transition-colors">
+            ← กลับ
+        </a>
+        <h1 class="text-3xl font-bold text-dark-text">
+            {% if form.instance.pk %}✏️ แก้ไขแม่แบบ{% else %}➕ สร้างแม่แบบใหม่{% endif %}
+        </h1>
+    </div>
+
+    <!-- Form Card -->
+    <div class="card">
+        <form method="post" class="space-y-6">
+            {% csrf_token %}
+
+            {% if form.errors %}
+            <div class="p-4 bg-red-900/30 border-2 border-red-600 rounded-xl text-red-200 text-sm space-y-1">
+                {% for field, errors in form.errors.items %}
+                <p class="font-semibold">❌ {{ field }}: {{ errors.0 }}</p>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <!-- Section: ข้อมูลแม่แบบ -->
+            <div class="space-y-4">
+                <div class="flex items-center gap-2 pb-2 border-b-2 border-dark-border">
+                    <span class="text-xl">📋</span>
+                    <h2 class="text-lg font-bold text-dark-text">ข้อมูลแม่แบบ</h2>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-semibold text-dark-text mb-2">ชื่อแม่แบบ *</label>
+                    {{ form.name }}
+                </div>
+
+                <div>
+                    <label class="block text-sm font-semibold text-dark-text mb-2">รายละเอียด</label>
+                    {{ form.description }}
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-semibold text-dark-text mb-2">หมวดหมู่</label>
+                        {{ form.category }}
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-dark-text mb-2">ความสำคัญ</label>
+                        {{ form.priority }}
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-semibold text-dark-text mb-2">⏱ เวลาที่คาด (นาที)</label>
+                        {{ form.estimated_minutes }}
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-dark-text mb-2">📍 สถานที่</label>
+                        {{ form.location }}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Section: โหมดงาน -->
+            <div class="space-y-4">
+                <div class="flex items-center gap-2 pb-2 border-b-2 border-dark-border">
+                    <span class="text-xl">🎯</span>
+                    <h2 class="text-lg font-bold text-dark-text">โหมดงาน</h2>
+                </div>
+
+                <div class="flex items-center gap-3 p-4 bg-dark-surface rounded-xl border-2 border-dark-border">
+                    {{ form.is_open }}
+                    <div>
+                        <label for="{{ form.is_open.id_for_label }}" class="text-sm font-semibold text-dark-text cursor-pointer">
+                            📢 เปิดให้แย่งงาน
+                        </label>
+                        <p class="text-xs text-dark-muted mt-1">เมื่อสร้างงานจากแม่แบบนี้ จะเป็นงานเปิดให้แย่ง而非มอบหมายเฉพาะคน</p>
+                    </div>
+                </div>
+
+                <div id="template-reward-section" class="{% if not form.instance.is_open %}hidden{% endif %}">
+                    <label class="block text-sm font-semibold text-dark-text mb-2">💰 ค่าตอบแทน (บาท)</label>
+                    <div class="relative">
+                        <span class="absolute left-4 top-1/2 -translate-y-1/2 text-dark-muted font-bold text-lg">฿</span>
+                        {{ form.reward }}
+                    </div>
+                    <p class="text-xs text-dark-muted mt-2">ค่าตอบแทนที่จะแสดงให้พนักงานเห็นก่อนแย่งงาน</p>
+                </div>
+            </div>
+
+            <!-- Section: ตั้งค่าเวลา -->
+            <div class="space-y-4">
+                <div class="flex items-center gap-2 pb-2 border-b-2 border-dark-border">
+                    <span class="text-xl">⏰</span>
+                    <h2 class="text-lg font-bold text-dark-text">ตั้งค่าเวลา</h2>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-semibold text-dark-text mb-2">🔧 เตรียมงานล่วงหน้า (นาที)</label>
+                        {{ form.default_prepare_minutes_before }}
+                        <p class="text-xs text-dark-muted mt-1">นาทีก่อน start_at ที่ควรเริ่มเตรียม</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-dark-text mb-2">⏱ ระยะเวลาทำงาน (นาที)</label>
+                        {{ form.default_duration_minutes }}
+                        <p class="text-xs text-dark-muted mt-1">ระยะเวลาที่คาดว่าจะใช้ทำงาน</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Section: การทำซ้ำ -->
+            <div class="space-y-4">
+                <div class="flex items-center gap-2 pb-2 border-b-2 border-dark-border">
+                    <span class="text-xl">🔄</span>
+                    <h2 class="text-lg font-bold text-dark-text">การทำซ้ำ</h2>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-semibold text-dark-text mb-2">ประเภท</label>
+                        {{ form.recurrence_type }}
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-dark-text mb-2">เวลาเริ่มงาน</label>
+                        {{ form.recurrence_time }}
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-semibold text-dark-text mb-2">👥 ทีมเริ่มต้น</label>
+                    {{ form.default_team }}
+                </div>
+            </div>
+
+            <!-- Section: หมายเหตุ -->
+            <div class="space-y-4">
+                <div class="flex items-center gap-2 pb-2 border-b-2 border-dark-border">
+                    <span class="text-xl">📝</span>
+                    <h2 class="text-lg font-bold text-dark-text">หมายเหตุ</h2>
+                </div>
+                <div>
+                    {{ form.notes }}
+                </div>
+            </div>
+
+            <!-- Actions -->
+            <div class="flex gap-4 pt-4 border-t-2 border-dark-border">
+                <button type="submit" class="btn btn-primary flex-1 text-base py-3">
+                    💾 บันทึก
+                </button>
+                <a href="{% url 'scheduling:template-list' %}" class="btn btn-ghost">
+                    ✕ ยกเลิก
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Toggle reward section based on is_open checkbox
+    const isOpenCheckbox = document.querySelector('input[name="is_open"]');
+    const rewardSection = document.getElementById('template-reward-section');
+    if (isOpenCheckbox && rewardSection) {
+        isOpenCheckbox.addEventListener('change', function() {
+            rewardSection.classList.toggle('hidden', !this.checked);
+        });
+    }
+</script>
+{% endblock %}

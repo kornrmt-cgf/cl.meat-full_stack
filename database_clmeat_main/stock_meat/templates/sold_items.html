@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% block title %}สินค้าที่ขายแล้ว - CL.MEAT{% endblock %}
+{% block extra_css %}
+<style>
+/* ---- Sold Items page-specific ---- */
+main { max-width: 1200px; margin: 0 auto; padding: 16px; }
+.stat-card.profit .value { color: var(--success); }
+.stat-card.sales .value { color: var(--info); }
+.stat-card.elec .value { color: var(--warning); }
+.stat-card.net .value { color: var(--accent); }
+.badge-profit { background: rgba(22,163,74,0.1); color: var(--success); }
+.badge-loss { background: rgba(220,38,38,0.1); color: var(--danger); }
+.toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); padding: 12px 20px; border-radius: var(--radius-sm); font-weight: 700; z-index: 9999; animation: fadeIn .3s; }
+.toast.success { background: #166534; color: #dcfce7; }
+.toast.error { background: #991b1b; color: #fecaca; }
+@keyframes fadeIn { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+.loading { text-align: center; padding: 20px; color: var(--text-secondary); }
+</style>
+{% endblock %}
+{% block content %}
+
+<main>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px">
+        <h1 style="font-size:22px;font-weight:800">🧾 สินค้าที่ขายแล้ว (Loyverse)</h1>
+        <div class="toolbar">
+            <select id="daysFilter" class="btn btn-outline btn-sm" onchange="loadData()">
+                <option value="7">7 วัน</option>
+                <option value="30" selected>30 วัน</option>
+                <option value="90">90 วัน</option>
+            </select>
+            <input type="text" id="skuSearch" placeholder="🔍 ค้นหา SKU..." class="btn btn-outline btn-sm" oninput="filterItems()" style="width:140px">
+            <button class="btn btn-primary btn-sm" onclick="syncReceipts()">🔄 ซิงค์ใบเสร็จ</button>
+        </div>
+    </div>
+
+    <!-- STATS -->
+    <div class="stats-grid" id="statsGrid">
+        <div class="stat-card sales"><div class="label">💰 ยอดขายรวม</div><div class="value" id="sTotalSales">—</div></div>
+        <div class="stat-card profit"><div class="label">📈 กำไรรวม</div><div class="value" id="sTotalProfit">—</div></div>
+        <div class="stat-card elec"><div class="label">⚡ ค่าไฟรวม</div><div class="value" id="sTotalElec">—</div></div>
+        <div class="stat-card net"><div class="label">💵 กำไรสุทธิ</div><div class="value" id="sNetProfit">—</div></div>
+        <div class="stat-card"><div class="label">📦 จำนวนขาย</div><div class="value" id="sTotalItems">—</div></div>
+        <div class="stat-card"><div class="label">⏱️ เวลาเฉลี่ย</div><div class="value" id="sAvgDays">—</div></div>
+        <div class="stat-card"><div class="label">📊 %กำไรเฉลี่ย</div><div class="value" id="sAvgProfit">—</div></div>
+    </div>
+
+    <!-- DAILY CHART -->
+    <div class="card">
+        <div class="card-title">📈 แนวโน้มรายวัน</div>
+        <div id="dailyChart"></div>
+    </div>
+
+    <!-- TOP PRODUCTS -->
+    <div class="card">
+        <div class="card-title">🏆 สินค้าขายดี (ตาม Product_info)</div>
+        <div class="table-wrapper">
+            <table>
+                <thead><tr><th>สินค้า</th><th>จำนวน</th><th>ยอดขาย</th><th>กำไร</th><th>ค่าไฟ</th><th>เวลาเฉลี่ย</th></tr></thead>
+                <tbody id="topTable"><tr><td colspan="6" class="loading">กำลังโหลด...</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- TOP PRODUCTS BUTTONS -->
+    <div style="display:flex;gap:8px;margin-bottom:16px">
+        <button class="btn btn-outline btn-sm" onclick="clearProductFilter()">📋 แสดงรายการทั้งหมด</button>
+    </div>
+
+    <!-- ALL ITEMS -->
+    <div class="card">
+        <div class="card-title" style="justify-content:space-between">
+            <span>📋 รายการขายทั้งหมด (<span id="itemCount">0</span>) <span id="filterBadge" style="display:none"></span></span>
+            <button id="clearFilterBtn" class="btn btn-outline btn-sm" style="display:none" onclick="clearProductFilter()">✕ ล้างตัวกรอง</button>
+        </div>
+        <div class="table-wrapper">
+            <table>
+                <thead><tr><th>SKU</th><th>สินค้า</th><th>บิล</th><th>วันที่ขาย</th><th>จำนวน</th><th>ราคา</th><th>ต้นทุน</th><th>กำไร</th><th>%กำไร</th><th>วันที่ใช้</th><th>ค่าไฟ</th></tr></thead>
+                <tbody id="itemsTable"><tr><td colspan="11" class="loading">กำลังโหลด...</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+</main>
+
+<div id="toast" class="toast" style="display:none"></div>
+
+<script src="/static/chart-controls.js"></script>
+<script>
+var allItems=[];var currentProductFilter='';
+function toggleDarkMode(){var isDark=document.documentElement.classList.toggle('dark-mode');document.body.classList.toggle('dark-mode');localStorage.setItem('clmeat_dark_mode',isDark?'true':'false');document.getElementById('themeBtn').textContent=isDark?'☀️':'🌙'}
+(function(){var s=localStorage.getItem('clmeat_dark_mode');if(s==='true'){document.documentElement.classList.add('dark-mode');document.body.classList.add('dark-mode');document.getElementById('themeBtn').textContent='☀️'}})();
+
+function showToast(msg,type){var t=document.getElementById('toast');t.textContent=msg;t.className='toast '+(type||'success');t.style.display='block';setTimeout(function(){t.style.display='none'},4000)}
+
+function fmt(n){return '฿'+Number(n||0).toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:0})}
+
+async function loadData(){
+    var days=document.getElementById('daysFilter').value;
+    try{
+        var r=await fetch('/api/sold-items/summary/?days='+days);
+        var d=await r.json();
+        if(d.success)renderSummary(d);
+    }catch(e){console.error('summary',e)}
+    try{
+        var r2=await fetch('/api/sold-items/list/?days='+days);
+        var d2=await r2.json();
+        if(d2.success){allItems=d2.items;renderItems(d2.items)}
+    }catch(e){console.error('list',e)}
+}
+
+function renderSummary(d){
+    var s=d.summary;
+    document.getElementById('sTotalSales').textContent=fmt(s.total_sales);
+    document.getElementById('sTotalProfit').textContent=fmt(s.total_profit);
+    document.getElementById('sTotalElec').textContent=fmt(s.total_electricity);
+    var np=document.getElementById('sNetProfit');
+    np.textContent=fmt(s.net_profit);
+    np.style.color=s.net_profit>=0?'var(--success)':'var(--danger)';
+    document.getElementById('sTotalItems').textContent=s.total_items;
+    document.getElementById('sAvgDays').textContent=s.avg_days_to_sell+' วัน';
+    document.getElementById('sAvgProfit').textContent=s.avg_profit_percent.toFixed(1)+'%';
+
+    // Daily chart
+    if(!d.daily||!d.daily.length)return;
+    var now=new Date();var yr=now.getFullYear();var cdata=d.daily.map(function(r){var parts=(r.date||'').split('/');var dt=parts.length===2?yr+'-'+parts[1].padStart(2,'0')+'-'+parts[0].padStart(2,'0'):'';return{_date:dt,sales:r.sales||0,profit:r.profit||0,electricity:r.electricity||0}});
+    CLChart._inst['dailyChart']=new CLChart('dailyChart',{data:cdata,series:[{key:'sales',label:'ยอดขาย',color:'var(--info)'},{key:'profit',label:'กำไร',color:'var(--success)'},{key:'electricity',label:'ค่าไฟ',color:'var(--warning)'}],height:180})
+
+    // Top products
+    var tt=document.getElementById('topTable');
+    if(!d.top_products||!d.top_products.length){tt.innerHTML='<tr><td colspan="5" class="empty-state">ยังไม่มีข้อมูล</td></tr>';return}
+    tt.innerHTML=d.top_products.map(function(p){
+        var emoji='📦';
+        if(p.category&&p.category.indexOf('หมู')>=0)emoji='🐷';
+        else if(p.category&&p.category.indexOf('ไก่')>=0)emoji='🐔';
+        return '<tr style="cursor:pointer" onclick="filterByProduct(\''+p.name.replace(/'/g,"\\'")+'\')"><td><strong>'+emoji+' '+p.name+'</strong></td><td style="font-weight:700">'+p.quantity+'</td><td style="color:var(--info);font-weight:700">'+fmt(p.sales)+'</td><td style="color:var(--success);font-weight:700">'+fmt(p.profit)+'</td><td style="color:var(--warning)">'+fmt(p.electricity)+'</td><td>'+p.avg_days+' วัน</td></tr>';
+    }).join('');
+}
+
+function renderItems(items){
+    document.getElementById('itemCount').textContent=items.length;
+    var tb=document.getElementById('itemsTable');
+    if(!items.length){tb.innerHTML='<tr><td colspan="11" class="empty-state">ยังไม่มีรายการขาย</td></tr>';return}
+    tb.innerHTML=items.map(function(it){
+        var pc=it.profit_percent>=0?'badge-profit':'badge-loss';
+        return '<tr><td style="font-family:monospace;font-weight:700">'+it.sku+'</td><td><strong>'+it.name+'</strong></td><td>'+it.receipt_number+'</td><td>'+it.receipt_date+'</td><td>'+it.quantity+'</td><td style="color:var(--info);font-weight:700">'+fmt(it.selling_price)+'</td><td>'+fmt(it.cost_price)+'</td><td style="font-weight:700;color:'+(it.profit>=0?'var(--success)':'var(--danger)')+'">'+fmt(it.profit)+'</td><td><span class="badge '+pc+'">'+it.profit_percent.toFixed(1)+'%</span></td><td>'+it.days_to_sell+' วัน</td><td style="color:var(--warning)">'+fmt(it.electricity_cost)+'</td></tr>';
+    }).join('');
+}
+
+function filterByProduct(name){
+    currentProductFilter=name;
+    var filtered=allItems.filter(function(it){return it.name&&it.name.indexOf(name)>=0});
+    renderItems(filtered);
+    document.getElementById('itemCount').textContent=filtered.length;
+    document.getElementById('filterBadge').style.display='inline';
+    document.getElementById('filterBadge').innerHTML='<span class="badge" style="background:rgba(37,99,235,0.1);color:var(--accent);padding:3px 10px;border-radius:999px;font-size:12px">🔍 '+name+' ('+filtered.length+')</span>';
+    document.getElementById('clearFilterBtn').style.display='inline-block';
+    document.getElementById('itemsTable').closest('.card').scrollIntoView({behavior:'smooth'});
+}
+function clearProductFilter(){
+    currentProductFilter='';
+    document.getElementById('filterBadge').style.display='none';
+    document.getElementById('clearFilterBtn').style.display='none';
+    document.getElementById('skuSearch').value='';
+    renderItems(allItems);
+}
+function filterItems(){
+    if(currentProductFilter){clearProductFilter()}
+    var q=document.getElementById('skuSearch').value.toLowerCase();
+    if(!q){renderItems(allItems);return}
+    renderItems(allItems.filter(function(it){
+        return (it.sku+' '+it.name+' '+it.receipt_number).toLowerCase().indexOf(q)>=0;
+    }));
+}
+
+async function syncReceipts(){
+    showToast('กำลังซิงค์ใบเสร็จ...','info');
+    try{
+        var fd=new FormData();
+        fd.append('limit','100');
+        var r=await fetch('/api/sold-items/sync/',{method:'POST',body:fd});
+        var d=await r.json();
+        if(d.success){
+            showToast(d.message);
+            loadData();
+        }else{
+            showToast(d.message,'error');
+        }
+    }catch(e){showToast('เกิดข้อผิดพลาด','error')}
+}
+
+document.addEventListener('DOMContentLoaded',loadData);
+</script>
+{% endblock %}

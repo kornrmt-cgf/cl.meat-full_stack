@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}แจ้งเตือน - CL.MEAT TaskManager{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-2xl font-bold">🔔 แจ้งเตือน</h1>
+            <p class="text-dark-muted mt-1">
+                {% if unread_count > 0 %}
+                คุณมี {{ unread_count }} แจ้งเตือนที่ยังไม่อ่าน
+                {% else %}
+                ไม่มีแจ้งเตือนใหม่
+                {% endif %}
+            </p>
+        </div>
+        {% if unread_count > 0 %}
+        <button
+            hx-post="{% url 'notifications:mark-all-read' %}"
+            hx-swap="none"
+            class="btn btn-primary text-sm"
+            onclick="location.reload();"
+        >
+            ✅ อ่านทั้งหมด
+        </button>
+        {% endif %}
+    </div>
+
+    <!-- Notification List -->
+    <div class="space-y-3" id="notification-list">
+        {% for notification in notifications %}
+        <div
+            id="notification-{{ notification.pk }}"
+            class="card {% if not notification.is_read %}border-primary-500/30 bg-primary-500/5{% endif %} cursor-pointer"
+            onclick="
+                {% if not notification.is_read %}
+                htmx.post('{% url 'notifications:mark-read' pk=notification.pk %}');
+                this.classList.remove('border-primary-500/30', 'bg-primary-500/5');
+                {% endif %}
+                {% if notification.task %}
+                window.location.href = '{% url 'tasks:detail' pk=notification.task.pk %}';
+                {% endif %}
+            "
+        >
+            <div class="flex items-start gap-4">
+                <!-- Icon -->
+                <div class="flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center
+                    {% if notification.notification_type == 'task_assigned' %}bg-blue-500/20 text-blue-400
+                    {% elif notification.notification_type == 'task_starting' %}bg-amber-500/20 text-amber-400
+                    {% elif notification.notification_type == 'task_overdue' %}bg-red-500/20 text-red-400
+                    {% elif notification.notification_type == 'task_rescheduled' %}bg-purple-500/20 text-purple-400
+                    {% elif notification.notification_type == 'task_postponed' %}bg-orange-500/20 text-orange-400
+                    {% elif notification.notification_type == 'task_problem' %}bg-red-500/20 text-red-400
+                    {% elif notification.notification_type == 'task_error' %}bg-red-600/20 text-red-500
+                    {% elif notification.notification_type == 'task_completed' %}bg-emerald-500/20 text-emerald-400
+                    {% else %}bg-gray-500/20 text-gray-400{% endif %}">
+                    {% if notification.notification_type == 'task_assigned' %}📋
+                    {% elif notification.notification_type == 'task_starting' %}🔔
+                    {% elif notification.notification_type == 'task_overdue' %}⚠️
+                    {% elif notification.notification_type == 'task_rescheduled' %}📅
+                    {% elif notification.notification_type == 'task_postponed' %}📆
+                    {% elif notification.notification_type == 'task_problem' %}🔴
+                    {% elif notification.notification_type == 'task_error' %}❌
+                    {% elif notification.notification_type == 'task_completed' %}✅
+                    {% else %}ℹ️{% endif %}
+                </div>
+
+                <!-- Content -->
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2">
+                        <h3 class="font-medium text-sm {% if not notification.is_read %}text-primary-400{% else %}text-dark-text{% endif %}">
+                            {{ notification.title }}
+                        </h3>
+                        {% if not notification.is_read %}
+                        <span class="w-2 h-2 bg-primary-500 rounded-full animate-pulse"></span>
+                        {% endif %}
+                    </div>
+                    <p class="text-dark-muted text-xs mt-1 line-clamp-2">
+                        {{ notification.message|truncatewords:30 }}
+                    </p>
+                    <div class="flex items-center gap-3 mt-2 text-xs text-dark-muted">
+                        <span>{{ notification.created_at|timesince }} ที่ผ่านมา</span>
+                        {% if notification.task %}
+                        <span class="text-primary-400">📌 {{ notification.task.title|truncatewords:10 }}</span>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% empty %}
+        <div class="card text-center py-12">
+            <div class="text-4xl mb-4">🔔</div>
+            <h3 class="text-lg font-medium text-dark-text">ไม่มีแจ้งเตือน</h3>
+            <p class="text-dark-muted text-sm mt-2">แจ้งเตือนของคุณจะปรากฏที่นี่</p>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

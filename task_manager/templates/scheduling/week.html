@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+
+{% block title %}ตารางสัปดาห์ - CL.MEAT TaskManager{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex items-center justify-between flex-wrap gap-4">
+        <div>
+            <h1 class="text-3xl font-bold text-dark-text">📆 ตารางสัปดาห์</h1>
+            <p class="text-dark-muted mt-1">
+                {{ monday|date:"d M" }} – {{ sunday|date:"d M Y" }}
+            </p>
+        </div>
+        <div class="flex items-center gap-2">
+            <a href="?date={{ prev_week|date:'Y-m-d' }}" class="btn btn-ghost btn-sm">← สัปดาห์ก่อน</a>
+            <a href="?date={{ today|date:'Y-m-d' }}" class="btn btn-primary btn-sm">วันนี้</a>
+            <a href="?date={{ next_week|date:'Y-m-d' }}" class="btn btn-ghost btn-sm">สัปดาห์ถัดไป →</a>
+        </div>
+    </div>
+
+    <!-- Current / Next Task -->
+    {% if current_task or next_task %}
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {% if current_task %}
+        <div class="card border-primary-500 border-2 animate-glow">
+            <p class="text-xs text-primary-400 font-medium mb-2">🔵 งานปัจจุบัน</p>
+            <h3 class="font-semibold text-dark-text text-lg">{{ current_task.title }}</h3>
+            <div class="flex items-center gap-2 mt-2">
+                <span class="badge status-{{ current_task.status }}">{{ current_task.get_status_display }}</span>
+                {% if current_task.start_at %}
+                <span class="text-sm text-dark-muted">{{ current_task.start_at|date:"H:i" }}{% if current_task.deadline %} – {{ current_task.deadline|date:"H:i" }}{% endif %}</span>
+                {% endif %}
+            </div>
+            <a href="{% url 'tasks:detail' current_task.pk %}" class="btn btn-primary text-xs mt-3">ดูรายละเอียด →</a>
+        </div>
+        {% endif %}
+
+        {% if next_task %}
+        <div class="card">
+            <p class="text-xs text-dark-muted font-medium mb-2">⏭️ งานถัดไป</p>
+            <h3 class="font-semibold text-dark-text text-lg">{{ next_task.title }}</h3>
+            <div class="flex items-center gap-2 mt-2">
+                <span class="badge status-{{ next_task.status }}">{{ next_task.get_status_display }}</span>
+                {% if next_task.start_at %}
+                <span class="text-sm text-dark-muted">{{ next_task.start_at|date:"H:i" }}{% if next_task.deadline %} – {{ next_task.deadline|date:"H:i" }}{% endif %}</span>
+                {% endif %}
+            </div>
+            <a href="{% url 'tasks:detail' next_task.pk %}" class="btn btn-ghost text-xs mt-3">ดูรายละเอียด →</a>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Week Grid -->
+    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-3">
+        {% for date, day_tasks in schedule.items %}
+        <div class="rounded-xl border {% if date == today %}border-primary-500 bg-primary-900/20 shadow-lg shadow-primary-500/10{% else %}border-dark-border bg-dark-surface{% endif %} p-3 min-h-[180px] lg:min-h-[200px]">
+            <div class="flex items-center justify-between mb-3">
+                <div>
+                    <p class="text-xs text-dark-muted">{{ date|date:"D" }}</p>
+                    <p class="font-semibold text-lg {% if date == today %}text-primary-400{% else %}text-dark-text{% endif %}">
+                        {{ date|date:"d" }}
+                    </p>
+                </div>
+                {% if date == today %}
+                <span class="text-[10px] bg-primary-600 text-white px-2 py-0.5 rounded-full font-medium">วันนี้</span>
+                {% endif %}
+            </div>
+
+            <div class="space-y-2">
+                {% for task in day_tasks %}
+                <a href="{% url 'tasks:detail' task.pk %}"
+                   class="block p-2 rounded-lg border border-dark-border hover:border-primary-500 transition-all duration-200
+                          hover:shadow-md
+                          {% if task.status == 'in_progress' %}bg-amber-900/30 border-amber-600
+                          {% elif task.status == 'problem' %}bg-red-900/30 border-red-600
+                          {% elif task.status == 'completed' %}bg-emerald-900/30 opacity-75
+                          {% else %}bg-dark-card{% endif %}">
+                    <p class="text-xs font-medium text-dark-text line-clamp-2">{{ task.title }}</p>
+                    <div class="flex items-center gap-1 mt-1 flex-wrap">
+                        <span class="text-[10px] px-1.5 py-0.5 rounded status-{{ task.status }} whitespace-nowrap">
+                            {{ task.get_status_display }}
+                        </span>
+                        {% if task.start_at %}
+                        <span class="text-[10px] text-dark-muted">{{ task.start_at|date:"H:i" }}</span>
+                        {% endif %}
+                    </div>
+                </a>
+                {% empty %}
+                <p class="text-xs text-dark-muted text-center py-4 opacity-50">-</p>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

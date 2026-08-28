@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% block title %}แม่แบบงาน - CL.MEAT TaskManager{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-3xl font-bold text-dark-text">📝 แม่แบบงาน</h1>
+            <p class="text-dark-muted mt-1">แม่แบบที่ใช้สร้างงานประจำ</p>
+        </div>
+        <a href="{% url 'scheduling:template-create' %}" class="btn btn-primary">
+            ➕ สร้างแม่แบบใหม่
+        </a>
+    </div>
+
+    <!-- Template Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {% for template in templates %}
+        <div class="card hover-glow">
+            <div class="flex items-start justify-between">
+                <div class="flex-1">
+                    <h3 class="font-semibold text-dark-text">{{ template.name }}</h3>
+                    {% if template.description %}
+                    <p class="text-sm text-dark-muted mt-1 line-clamp-2">{{ template.description }}</p>
+                    {% endif %}
+                </div>
+                <span class="badge badge-normal">{{ template.get_recurrence_type_display }}</span>
+            </div>
+
+            <div class="flex items-center gap-2 mt-3 flex-wrap">
+                <span class="badge {{ template.priority|default:2|yesno:'badge-urgent,badge-high,badge-normal,badge-low' }}">
+                    {{ template.get_priority_display }}
+                </span>
+                <span class="badge bg-dark-card">{{ template.get_category_display }}</span>
+                {% if template.recurrence_time %}
+                <span class="text-xs text-dark-muted">🕐 {{ template.recurrence_time|time:"H:i" }}</span>
+                {% endif %}
+                {% if template.default_duration_minutes %}
+                <span class="text-xs text-dark-muted">⏱️ {{ template.default_duration_minutes }} นาที</span>
+                {% endif %}
+            </div>
+
+            {% if template.location %}
+            <p class="text-xs text-dark-muted mt-2">📍 {{ template.location }}</p>
+            {% endif %}
+
+            <div class="flex gap-2 mt-4">
+                <form method="post" action="{% url 'scheduling:template-create-task' template.pk %}" class="flex-1">
+                    {% csrf_token %}
+                    <input type="hidden" name="date" value="{% now 'Y-m-d' %}">
+                    <button type="submit" class="btn btn-success text-xs w-full py-2">
+                        ➕ สร้างงานวันนี้
+                    </button>
+                </form>
+                <a href="{% url 'scheduling:template-edit' template.pk %}" class="btn btn-ghost text-xs px-3 py-2">
+                    ✏️
+                </a>
+                <form method="post" action="{% url 'scheduling:template-delete' template.pk %}"
+                      onsubmit="return confirm('ต้องการลบแม่แบบนี้?')">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-ghost text-xs px-3 py-2 text-red-400">
+                        🗑️
+                    </button>
+                </form>
+            </div>
+        </div>
+        {% empty %}
+        <div class="card text-center py-12 text-dark-muted col-span-full">
+            <p class="text-4xl mb-2">📋</p>
+            <p class="text-lg">ยังไม่มีแม่แบบงาน</p>
+            <p class="text-sm mt-2">สร้างแม่แบบเพื่อสร้างงานประจำได้ง่ายๆ</p>
+            <a href="{% url 'scheduling:template-create' %}" class="btn btn-primary mt-4">
+                ➕ สร้างแม่แบบแรก
+            </a>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

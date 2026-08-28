@@ -1,0 +1,10 @@
+<!-- Shared Navbar -->
+<nav>
+    <a href="/" class="{% if request.path == '/' %}nav-active{% endif %}">🍖 CL.MEAT</a>
+    <a href="{% url 'freeze_queue_page' %}" class="{% if request.path == '/freeze-queue/' %}nav-active{% endif %}">🧊 คิวหมุนเวียน</a>
+    <a href="{% url 'dashboard_page' %}" class="{% if request.path == '/dashboard/' %}nav-active{% endif %}">📊 Dashboard</a>
+    <a href="{% url 'finance_page' %}" class="{% if request.path == '/finance/' %}nav-active{% endif %}">💰 บัญชี</a>
+    <a href="{% url 'sold_items_page' %}" class="{% if request.path == '/sold-items/' %}nav-active{% endif %}">🧾 ขายแล้ว</a>
+    <a href="{% url 'add_product' %}" class="{% if request.path == '/add-product/' %}nav-active{% endif %}">➕ เพิ่มสินค้า</a>
+    <button class="theme-btn" onclick="toggleDarkMode()" id="themeBtn">🌙</button>
+</nav>

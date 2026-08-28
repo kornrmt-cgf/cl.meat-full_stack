@@ -1,0 +1,75 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}CL.MEAT{% endblock %}</title>
+    <style>
+    {% include "shared_css.html" %}
+    </style>
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <div class="navbar">
+        <div class="navbar-inner">
+            <a href="/" class="navbar-brand">🍖 CL.MEAT</a>
+            <button class="hamburger" onclick="document.querySelector('.navbar-links').classList.toggle('open')">
+                <span></span><span></span><span></span>
+            </button>
+            <div class="navbar-links">
+                <a href="/" class="{% if request.path == '/' %}active{% endif %}">📦 Home</a>
+                <a href="{% url 'freeze_queue_page' %}" class="{% if request.path == '/freeze-queue/' %}active{% endif %}">🧊 คิวหมุนเวียน</a>
+                <a href="{% url 'dashboard_page' %}" class="{% if request.path == '/dashboard/' %}active{% endif %}">📊 Dashboard</a>
+                <a href="{% url 'finance_page' %}" class="{% if request.path == '/finance/' %}active{% endif %}">💰 บัญชี</a>
+                <a href="{% url 'sold_items_page' %}" class="{% if request.path == '/sold-items/' %}active{% endif %}">🧾 ขายแล้ว</a>
+                <a href="{% url 'add_product' %}" class="{% if request.path == '/add-product/' %}active{% endif %}">➕ เพิ่มสินค้า</a>
+                <button class="theme-btn" onclick="toggleDarkMode()" id="themeBtn">🌙</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        {% block content %}{% endblock %}
+    </div>
+
+    <div class="toast-container" id="toastContainer"></div>
+
+    {% include "shared_dark_mode.html" %}
+
+    <script>
+    function showToast(type, msg) {
+        var c = document.getElementById('toastContainer');
+        var t = document.createElement('div');
+        t.className = 'toast ' + type;
+        t.textContent = msg;
+        c.appendChild(t);
+        setTimeout(function() { t.remove(); }, 4000);
+    }
+    function openModal(id) {
+        var m = document.getElementById(id);
+        if (m) m.classList.add('active');
+    }
+    function closeModal(id) {
+        var m = document.getElementById(id);
+        if (m) m.classList.remove('active');
+    }
+    // Close modal on overlay click
+    document.addEventListener('click', function(e) {
+        if (e.target.classList.contains('modal-overlay') && e.target.classList.contains('active')) {
+            e.target.classList.remove('active');
+        }
+    });
+    // Close modal on Escape
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            document.querySelectorAll('.modal-overlay.active').forEach(function(m) {
+                m.classList.remove('active');
+            });
+        }
+    });
+    </script>
+
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

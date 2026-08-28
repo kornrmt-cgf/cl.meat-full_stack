@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}ล็อตสินค้า - CL.MEAT{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>📦 ล็อตสินค้า</h1>
+    <a href="{% url 'inventory:batch_create' %}" class="btn btn-primary">➕ เพิ่มล็อต</a>
+</div>
+<div class="table-container">
+    {% if batches %}
+    <div class="table-responsive">
+        <table class="data-table">
+            <thead><tr><th data-sortable>หมายเลขล็อต</th><th data-sortable>ซัพพลายเออร์</th><th data-sortable>วันที่รับ</th><th data-sortable>สถานะ</th></tr></thead>
+            <tbody>
+                {% for b in batches %}
+                <tr>
+                    <td><strong>{{ b.batch_number }}</strong></td>
+                    <td>{{ b.supplier }}</td>
+                    <td class="text-sm">{{ b.received_at|date:"d/m/Y H:i" }}</td>
+                    <td>{% if b.active %}<span class="badge badge-active">ใช้งาน</span>{% else %}<span class="badge badge-inactive">ปิด</span>{% endif %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}<div class="empty-state"><div class="empty-state-icon">📦</div><h3>ยังไม่มีล็อต</h3></div>{% endif %}
+</div>
+{% endblock %}

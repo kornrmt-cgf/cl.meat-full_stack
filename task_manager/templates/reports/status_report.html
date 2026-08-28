@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block title %}รายงานสถานะงาน - CL.MEAT TaskManager{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex items-center justify-between flex-wrap gap-4">
+        <div>
+            <h1 class="text-3xl font-bold text-dark-text">📊 รายงานสถานะงาน</h1>
+        </div>
+        <a href="{% url 'reports:csv-export' %}?date_from={{ date_from|date:'Y-m-d' }}&date_to={{ date_to|date:'Y-m-d' }}" class="btn btn-success text-sm">📥 Export CSV</a>
+    </div>
+
+    <!-- Filter -->
+    <div class="card">
+        <form method="get" class="flex flex-wrap gap-4 items-end">
+            <div>
+                <label class="block text-sm text-dark-muted mb-1">ตั้งแต่</label>
+                <input type="date" name="date_from" value="{{ date_from|date:'Y-m-d' }}" class="form-input">
+            </div>
+            <div>
+                <label class="block text-sm text-dark-muted mb-1">ถึง</label>
+                <input type="date" name="date_to" value="{{ date_to|date:'Y-m-d' }}" class="form-input">
+            </div>
+            <button type="submit" class="btn btn-primary text-sm">🔍 ค้นหา</button>
+        </form>
+    </div>
+
+    <!-- Summary -->
+    <div class="card text-center">
+        <p class="text-sm text-dark-muted">งานทั้งหมด (ไม่รวมยกเลิก)</p>
+        <p class="text-4xl font-bold text-primary-400">{{ total }}</p>
+    </div>
+
+    <!-- Status Breakdown -->
+    <div class="card">
+        <h2 class="text-lg font-semibold text-dark-text mb-4">📋 สถานะงาน</h2>
+        <div class="space-y-3">
+            {% for status_key, data in status_counts.items %}
+            <div class="flex items-center gap-4 p-3 bg-dark-bg rounded-lg">
+                <span class="badge status-{{ status_key }}">{{ data.label }}</span>
+                <div class="flex-1">
+                    {% if total > 0 %}
+                    <div class="w-full bg-dark-border rounded-full h-4">
+                        <div class="h-4 rounded-full
+                            {% if status_key == 'completed' %}bg-emerald-500
+                            {% elif status_key == 'in_progress' %}bg-amber-500
+                            {% elif status_key == 'problem' %}bg-red-500
+                            {% elif status_key == 'error' %}bg-red-700
+                            {% elif status_key == 'scheduled' %}bg-gray-500
+                            {% elif status_key == 'ready' %}bg-blue-500
+                            {% elif status_key == 'accepted' %}bg-purple-500
+                            {% elif status_key == 'postponed' %}bg-orange-500
+                            {% else %}bg-gray-400{% endif %}"
+                             style="width: {% widthratio data.count total 100 %}%"></div>
+                    </div>
+                    {% endif %}
+                </div>
+                <span class="text-lg font-bold text-dark-text w-12 text-right">{{ data.count }}</span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}เข้าสู่ระบบ - CL.MEAT{% endblock %}
+
+{% block content %}
+<div class="login-page">
+    <div class="login-card">
+        <div class="login-header">
+            <div style="font-size:2.5rem;margin-bottom:8px;">🥩</div>
+            <h2>CL.MEAT</h2>
+            <p>ระบบจัดการเนื้อสด</p>
+        </div>
+
+        {% if form.errors %}
+            <div class="alert alert-error" style="margin-bottom:20px;">
+                <span>ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง</span>
+            </div>
+        {% endif %}
+
+        <form method="post">
+            {% csrf_token %}
+            <div class="form-group">
+                <label class="form-label" for="id_username">👤 ชื่อผู้ใช้</label>
+                <input type="text" name="username" id="id_username"
+                       class="form-control" placeholder="กรอกชื่อผู้ใช้" autofocus required>
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="id_password">🔑 รหัสผ่าน</label>
+                <input type="password" name="password" id="id_password"
+                       class="form-control" placeholder="กรอกรหัสผ่าน" required>
+            </div>
+            {% if next %}
+                <input type="hidden" name="next" value="{{ next }}">
+            {% endif %}
+            <button type="submit" class="btn btn-primary btn-lg btn-block">
+                เข้าสู่ระบบ
+            </button>
+        </form>
+    </div>
+</div>
+{% endblock %}

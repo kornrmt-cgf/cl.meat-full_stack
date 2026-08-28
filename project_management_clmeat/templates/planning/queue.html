@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}คิวละลายน้ำแข็ง - CL.MEAT{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>🔀 คิวละลายน้ำแข็ง</h1>
+</div>
+
+<div class="table-container">
+    {% if queue_entries %}
+    <div class="table-responsive">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th data-sortable>ตำแหน่ง</th>
+                    <th data-sortable>สินค้า</th>
+                    <th data-sortable data-type="number">น้ำหนัก</th>
+                    <th data-sortable>กำหนดเริ่มละลาย</th>
+                    <th data-sortable>กำหนดพร้อมขาย</th>
+                    <th data-sortable>สถานะ</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for entry in queue_entries %}
+                <tr style="cursor:pointer;" onclick="location.href='{% url 'planning:queue_detail' pk=entry.pk %}'">
+                    <td><a href="{% url 'planning:queue_detail' pk=entry.pk %}" style="font-weight:600;">#{{ entry.queue_position }}</a></td>
+                    <td><strong>{{ entry.package.product.name }}</strong></td>
+                    <td>{{ entry.package.weight }} กก.</td>
+                    <td>{{ entry.planned_start_at|date:"d/m/Y H:i" }}</td>
+                    <td>{{ entry.target_ready_at|date:"d/m/Y H:i" }}</td>
+                    <td><span class="status-badge status-{{ entry.status|lower }}">{{ entry.get_status_display }}</span></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <div class="empty-state-icon">🔀</div>
+        <h3>ยังไม่มีสินค้าในคิว</h3>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

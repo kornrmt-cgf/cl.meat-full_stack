@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% load static %}
+{% load user_permissions %}
+
+{% block title %}แผนการหมุนเวียน - CL.MEAT{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>📋 แผนการหมุนเวียนสินค้า</h1>
+    {% if user.is_superuser or user|has_perm:"planning.add_rotationplan" %}
+    <a href="{% url 'planning:plan_create' %}" class="btn btn-primary">➕ สร้างแผนงาน</a>
+    {% endif %}
+</div>
+
+<!-- Filters -->
+<div class="filter-bar">
+    <form method="get">
+        <div class="form-group">
+            <label class="form-label">สถานะแผน</label>
+            <select name="status" class="form-select">
+                <option value="">ทั้งหมด</option>
+                <option value="DRAFT" {% if current_status_filter == 'DRAFT' %}selected{% endif %}>DRAFT</option>
+                <option value="PLANNED" {% if current_status_filter == 'PLANNED' %}selected{% endif %}>PLANNED</option>
+                <option value="IN_PROGRESS" {% if current_status_filter == 'IN_PROGRESS' %}selected{% endif %}>IN_PROGRESS</option>
+                <option value="COMPLETED" {% if current_status_filter == 'COMPLETED' %}selected{% endif %}>COMPLETED</option>
+                <option value="CANCELLED" {% if current_status_filter == 'CANCELLED' %}selected{% endif %}>CANCELLED</option>
+                <option value="AT_RISK" {% if current_status_filter == 'AT_RISK' %}selected{% endif %}>AT_RISK</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label class="form-label">สินค้า</label>
+            <select name="product" class="form-select">
+                <option value="">ทั้งหมด</option>
+                {% for product in products %}
+                    <option value="{{ product.pk }}" {% if current_product_filter == product.pk|stringformat:"d" %}selected{% endif %}>
+                        {{ product.name }}
+                    </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group">
+            <label class="form-label">สถานะแพ็กเกจ</label>
+            <select name="package_state" class="form-select">
+                <option value="">ทั้งหมด</option>
+                {% for value, label in package_states %}
+                    <option value="{{ value }}" {% if current_package_state_filter == value %}selected{% endif %}>
+                        {{ label }}
+                    </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group">
+            <button type="submit" class="btn btn-primary">🔍 ค้นหา</button>
+        </div>
+    </form>
+</div>
+
+<!-- Plans Table -->
+<div class="table-container">
+    {% if plans %}
+    <div class="table-responsive">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th data-sortable>#</th>
+                    <th data-sortable>สินค้า</th>
+                    <th data-sortable data-type="number">น้ำหนัก</th>
+                    <th data-sortable>บาร์โค้ด</th>
+                    <th data-sortable>กำหนดพร้อมขาย</th>
+                    <th data-sortable>เริ่มละลาย</th>
+                    <th data-sortable>เข้าคิว</th>
+                    <th data-sortable>สถานะแพ็กเกจ</th>
+                    <th data-sortable>สถานะแผน</th>
+                    {% if can_edit %}<th>จัดการ</th>{% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for plan in plans %}
+                <tr>
+                    <td><a href="{% url 'planning:plan_detail' pk=plan.pk %}" style="font-weight:600;">#{{ plan.id }}</a></td>
+                    <td><strong>{{ plan.package.product.name }}</strong></td>
+                    <td>{{ plan.package.weight }} กก.</td>
+                    <td><span class="font-mono text-sm">{{ plan.package.barcode|default:"-" }}</span></td>
+                    <td>{{ plan.target_ready_at|date:"d/m/Y H:i" }}</td>
+                    <td>{{ plan.planned_thaw_start_at|date:"d/m/Y H:i" }}</td>
+                    <td>{{ plan.planned_thaw_queue_at|date:"d/m/Y H:i" }}</td>
+                    <td><span class="status-badge status-{{ plan.package.current_state|lower }}">{{ plan.package.get_current_state_display }}</span></td>
+                    <td><span class="status-badge status-{{ plan.status|lower }}">{{ plan.status }}</span></td>
+                    {% if can_edit %}
+                    <td><a href="{% url 'planning:plan_edit' pk=plan.pk %}" class="btn btn-sm btn-outline-primary">✏️ แก้ไข</a></td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <div class="empty-state-icon">📋</div>
+        <h3>ยังไม่มีแผนงาน</h3>
+        <p>คลิก "สร้างแผนใหม่" เพื่อเริ่มต้น</p>
+        {% if user.is_superuser or user|has_perm:"planning.add_rotationplan" %}
+        <a href="{% url 'planning:plan_create' %}" class="btn btn-primary">➕ สร้างแผนงาน</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

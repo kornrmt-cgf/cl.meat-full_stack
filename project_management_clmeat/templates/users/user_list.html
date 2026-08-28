@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}จัดการผู้ใช้ - CL.MEAT{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>👥 จัดการผู้ใช้</h1>
+    <a href="{% url 'users:user_create' %}" class="btn btn-primary">➕ สร้างผู้ใช้ใหม่</a>
+</div>
+
+<!-- Users Table -->
+<div class="table-container mb-6">
+    <div class="table-responsive">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th data-sortable>ชื่อผู้ใช้</th>
+                    <th data-sortable>ชื่อ-นามสกุล</th>
+                    <th data-sortable>อีเมล</th>
+                    <th data-sortable>กลุ่ม</th>
+                    <th data-sortable>สถานะ</th>
+                    <th data-sortable>วันที่สร้าง</th>
+                    <th>จัดการ</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for u in users %}
+                <tr>
+                    <td>
+                        <strong>{{ u.username }}</strong>
+                        {% if u.is_superuser %}
+                            <span class="badge badge-admin" style="margin-left:6px;">SUPERUSER</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ u.get_full_name|default:"-" }}</td>
+                    <td class="text-sm">{{ u.email|default:"-" }}</td>
+                    <td>
+                        {% for group in u.groups.all %}
+                            <span class="badge badge-{{ group.name|lower }}">{{ group.name }}</span>
+                        {% empty %}
+                            <span class="text-muted text-xs">ไม่มีกลุ่ม</span>
+                        {% endfor %}
+                    </td>
+                    <td>
+                        {% if u.is_active %}
+                            <span class="badge badge-active">ใช้งาน</span>
+                        {% else %}
+                            <span class="badge badge-inactive">ปิดใช้งาน</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-xs">{{ u.date_joined|date:"d/m/Y H:i" }}</td>
+                    <td>
+                        <div class="btn-group">
+                            <a href="{% url 'users:user_edit' pk=u.pk %}" class="btn btn-sm btn-outline-primary">แก้ไข</a>
+                            <a href="{% url 'users:user_reset_password' pk=u.pk %}" class="btn btn-sm btn-outline-warning">🔑</a>
+                            {% if u != request.user %}
+                                <a href="{% url 'users:user_toggle_active' pk=u.pk %}"
+                                   class="btn btn-sm btn-outline-{% if u.is_active %}danger{% else %}success{% endif %}"
+                                   onclick="return confirm('{% if u.is_active %}ปิดการใช้งาน{% else %}เปิดการใช้งาน{% endif %} {{ u.username }}?')">
+                                    {% if u.is_active %}ปิด{% else %}เปิด{% endif %}
+                                </a>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Roles Reference -->
+<div class="card">
+    <div class="card-header"><h4>📋 กลุ่มผู้ใช้ (Roles)</h4></div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>กลุ่ม</th>
+                        <th>สิทธิ์</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><span class="badge badge-admin">ADMIN</span></td>
+                        <td>จัดการผู้ใช้, จัดการสินค้า, สร้าง/แก้ไขแผนงาน, จัดการคิว, ดูประวัติ, กู้ข้อมูล</td>
+                    </tr>
+                    <tr>
+                        <td><span class="badge badge-manager">MANAGER</span></td>
+                        <td>ดูแดชบอร์ด, ดูสินค้า, สร้าง/แก้ไขแผนงาน, จัดการคิว, ดูประวัติ</td>
+                    </tr>
+                    <tr>
+                        <td><span class="badge badge-worker">WORKER</span></td>
+                        <td>สแกนสินค้า, ทำงานตาม Task, ดูงานวันนี้</td>
+                    </tr>
+                    <tr>
+                        <td><span class="badge badge-viewer">VIEWER</span></td>
+                        <td>ดูแดชบอร์ด, ดูสินค้า, ดูแผนงาน, ดูประวัติ</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

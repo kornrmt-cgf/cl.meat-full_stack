@@ -1,0 +1,274 @@
+{% extends "base.html" %}
+
+{% block title %}งานวันนี้ - CL.MEAT TaskManager{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex items-center justify-between flex-wrap gap-4">
+        <div>
+            <h1 class="text-3xl font-bold text-dark-text">📋 งานวันนี้</h1>
+            <p class="text-dark-muted mt-1">
+                {{ today|date:"l d F Y" }} | 
+                มีงาน {{ tasks.count }} รายการ
+            </p>
+        </div>
+        <div class="flex gap-2">
+            <a href="{% url 'scheduling:week' %}" class="btn btn-ghost btn-sm">📆 สัปดาห์</a>
+            {% if user.is_staff or user.is_superuser %}
+            <a href="{% url 'tasks:create' %}" class="btn btn-primary">➕ สร้างงานใหม่</a>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Open Tasks (Marketplace) -->
+    {% if open_tasks %}
+    <div class="card border-primary-500/30 bg-primary-600/5">
+        <div class="flex items-center justify-between mb-4">
+            <div>
+                <h2 class="text-lg font-bold text-dark-text">📢 งานเปิดรับ</h2>
+                <p class="text-sm text-dark-muted">{{ open_tasks.count }} งานรอแย่ง</p>
+            </div>
+            <a href="{% url 'tasks:open_tasks' %}" class="btn btn-primary btn-sm">ดูทั้งหมด →</a>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {% for task in open_tasks|slice:":3" %}
+            <div class="p-3 bg-dark-surface rounded-xl border border-dark-border hover:border-primary-500 transition-all">
+                <div class="flex items-start justify-between gap-2">
+                    <div class="flex-1 min-w-0">
+                        <h3 class="text-sm font-bold text-dark-text truncate">{{ task.title }}</h3>
+                        <div class="flex items-center gap-2 mt-1">
+                            <span class="badge {{ task.priority_badge_class }} text-[10px]">{{ task.get_priority_display }}</span>
+                            {% if task.reward > 0 %}
+                            <span class="text-xs font-bold text-amber-400">💰 ฿{{ task.reward|floatformat:0 }}</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                <form method="post" action="{% url 'tasks:claim' task.pk %}" class="mt-2">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-primary btn-sm w-full text-xs py-1.5">⚡ แย่งงาน</button>
+                </form>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Current / Next Task — Hero Section -->
+    {% if current_task or next_task %}
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {% if current_task %}
+        <div class="card border-primary-500 border-2 animate-glow">
+            <div class="flex items-center gap-2 mb-3">
+                <div class="w-3 h-3 rounded-full bg-primary-500 animate-pulse"></div>
+                <p class="text-sm text-primary-400 font-semibold">🔵 งานปัจจุบัน</p>
+            </div>
+            <h3 class="font-bold text-dark-text text-xl">{{ current_task.title }}</h3>
+            <div class="flex items-center gap-3 mt-3">
+                <span class="badge status-{{ current_task.status }}">{{ current_task.get_status_display }}</span>
+                <span class="badge {{ current_task.priority_badge_class }}">{{ current_task.get_priority_display }}</span>
+            </div>
+            <div class="flex items-center gap-4 mt-3 text-sm text-dark-muted">
+                {% if current_task.start_at %}
+                <span>▶️ เริ่ม {{ current_task.start_at|date:"H:i" }}</span>
+                {% endif %}
+                {% if current_task.deadline %}
+                <span class="{% if current_task.is_overdue %}text-red-400 font-bold{% endif %}">⏰ กำหนด {{ current_task.deadline|date:"H:i" }}</span>
+                {% endif %}
+            </div>
+            <div class="flex gap-3 mt-4">
+                <a href="{% url 'tasks:detail' current_task.pk %}" class="btn btn-primary text-sm">ดูรายละเอียด →</a>
+                {% if current_task.status == "in_progress" %}
+                <form method="post" action="{% url 'tasks:complete' current_task.pk %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-success text-sm">✅ เสร็จงาน</button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if next_task %}
+        <div class="card">
+            <div class="flex items-center gap-2 mb-3">
+                <div class="w-3 h-3 rounded-full bg-dark-muted"></div>
+                <p class="text-sm text-dark-muted font-medium">⏭️ งานถัดไป</p>
+            </div>
+            <h3 class="font-bold text-dark-text text-xl">{{ next_task.title }}</h3>
+            <div class="flex items-center gap-3 mt-3">
+                <span class="badge status-{{ next_task.status }}">{{ next_task.get_status_display }}</span>
+                <span class="badge {{ next_task.priority_badge_class }}">{{ next_task.priority_badge_class }}</span>
+            </div>
+            <div class="flex items-center gap-4 mt-3 text-sm text-dark-muted">
+                {% if next_task.start_at %}
+                <span>▶️ เริ่ม {{ next_task.start_at|date:"H:i" }}</span>
+                {% endif %}
+                {% if next_task.deadline %}
+                <span>⏰ กำหนด {{ next_task.deadline|date:"H:i" }}</span>
+                {% endif %}
+            </div>
+            <a href="{% url 'tasks:detail' next_task.pk %}" class="btn btn-ghost text-sm mt-4">ดูรายละเอียด →</a>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Task Sections — Desktop: 3 columns, Mobile: stacked -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- In Progress -->
+        <div class="space-y-4">
+            <div class="flex items-center gap-2">
+                <div class="w-3 h-3 rounded-full bg-amber-500"></div>
+                <h2 class="text-lg font-semibold text-dark-text">กำลังทำ</h2>
+                <span class="badge bg-amber-600">{{ in_progress.count }}</span>
+            </div>
+
+            {% for task in in_progress %}
+            <div class="card hover-glow cursor-pointer border-l-4 border-amber-500"
+                 onclick="window.location='{% url 'tasks:detail' task.pk %}'">
+                <div class="flex items-start justify-between gap-3">
+                    <div class="flex-1 min-w-0">
+                        <h3 class="font-semibold text-dark-text truncate">{{ task.title }}</h3>
+                        {% if task.description %}
+                        <p class="text-sm text-dark-muted mt-1 line-clamp-2">{{ task.description }}</p>
+                        {% endif %}
+                        <div class="flex items-center gap-2 mt-3 flex-wrap">
+                            <span class="badge status-in_progress">กำลังทำ</span>
+                            <span class="badge {{ task.priority_badge_class }}">{{ task.get_priority_display }}</span>
+                        </div>
+                        <div class="flex items-center gap-3 mt-2 text-xs text-dark-muted">
+                            {% if task.start_at %}<span>▶️ {{ task.start_at|date:"H:i" }}</span>{% endif %}
+                            {% if task.deadline %}<span class="{% if task.is_overdue %}text-red-400 font-bold{% endif %}">⏰ {{ task.deadline|date:"H:i" }}</span>{% endif %}
+                        </div>
+                    </div>
+                </div>
+                <div class="flex gap-2 mt-3 pt-3 border-t border-dark-border">
+                    <form method="post" action="{% url 'tasks:complete' task.pk %}" class="flex-1">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-success w-full text-sm py-2">✅ เสร็จงาน</button>
+                    </form>
+                    <form method="post" action="{% url 'tasks:problem' task.pk %}" class="flex-1">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-warning w-full text-sm py-2">⚠️ ปัญหา</button>
+                    </form>
+                    <form method="post" action="{% url 'tasks:error' task.pk %}" class="flex-1">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-danger w-full text-sm py-2">❌ ข้อผิดพลาด</button>
+                    </form>
+                </div>
+            </div>
+            {% empty %}
+            <div class="card text-center py-8 text-dark-muted">
+                <p class="text-4xl mb-2">🎯</p>
+                <p>ไม่มีงานที่กำลังทำ</p>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- Problems -->
+        <div class="space-y-4">
+            <div class="flex items-center gap-2">
+                <div class="w-3 h-3 rounded-full bg-red-500"></div>
+                <h2 class="text-lg font-semibold text-dark-text">มีปัญหา</h2>
+                <span class="badge bg-red-600">{{ problem.count }}</span>
+            </div>
+
+            {% for task in problem %}
+            <div class="card border-red-700 hover-glow cursor-pointer border-l-4 border-red-500"
+                 onclick="window.location='{% url 'tasks:detail' task.pk %}'">
+                <div class="flex items-start justify-between gap-3">
+                    <div class="flex-1 min-w-0">
+                        <h3 class="font-semibold text-dark-text truncate">{{ task.title }}</h3>
+                        <div class="flex items-center gap-2 mt-3">
+                            <span class="badge status-problem">มีปัญหา</span>
+                            <span class="badge {{ task.priority_badge_class }}">{{ task.get_priority_display }}</span>
+                        </div>
+                        {% if task.reports.last %}
+                        <p class="text-xs text-red-400 mt-2">⚠️ {{ task.reports.last.title|truncatewords:10 }}</p>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="mt-3 pt-3 border-t border-dark-border">
+                    <a href="{% url 'tasks:detail' task.pk %}" class="btn btn-ghost w-full text-sm py-2">ดูรายละเอียด →</a>
+                </div>
+            </div>
+            {% empty %}
+            <div class="card text-center py-8 text-dark-muted">
+                <p class="text-4xl mb-2">✅</p>
+                <p>ไม่มีงานที่มีปัญหา</p>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- Scheduled -->
+        <div class="space-y-4">
+            <div class="flex items-center gap-2">
+                <div class="w-3 h-3 rounded-full bg-blue-500"></div>
+                <h2 class="text-lg font-semibold text-dark-text">กำหนดไว้</h2>
+                <span class="badge bg-blue-600">{{ scheduled.count }}</span>
+            </div>
+
+            {% for task in scheduled %}
+            <div class="card hover-glow cursor-pointer border-l-4 border-blue-500"
+                 onclick="window.location='{% url 'tasks:detail' task.pk %}'">
+                <div class="flex items-start justify-between gap-3">
+                    <div class="flex-1 min-w-0">
+                        <h3 class="font-semibold text-dark-text truncate">{{ task.title }}</h3>
+                        {% if task.description %}
+                        <p class="text-sm text-dark-muted mt-1 line-clamp-2">{{ task.description }}</p>
+                        {% endif %}
+                        <div class="flex items-center gap-2 mt-3 flex-wrap">
+                            <span class="badge status-scheduled">กำหนดไว้</span>
+                            <span class="badge {{ task.priority_badge_class }}">{{ task.get_priority_display }}</span>
+                        </div>
+                        <div class="flex items-center gap-3 mt-2 text-xs text-dark-muted flex-wrap">
+                            {% if task.prepare_at %}<span>🔧 {{ task.prepare_at|date:"H:i" }}</span>{% endif %}
+                            {% if task.start_at %}<span>▶️ {{ task.start_at|date:"H:i" }}</span>{% endif %}
+                            {% if task.deadline %}<span>⏰ {{ task.deadline|date:"H:i" }}</span>{% endif %}
+                            {% if task.queue_position %}<span>#{{ task.queue_position }}</span>{% endif %}
+                        </div>
+                    </div>
+                </div>
+                <div class="mt-3 pt-3 border-t border-dark-border">
+                    <form method="post" action="{% url 'tasks:accept' task.pk %}">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-primary w-full text-sm py-2">🤝 รับงาน</button>
+                    </form>
+                </div>
+            </div>
+            {% empty %}
+            <div class="card text-center py-8 text-dark-muted col-span-full">
+                <p class="text-4xl mb-2">📭</p>
+                <p>ไม่มีงานที่กำหนดไว้</p>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Completed Today -->
+    {% if completed %}
+    <div class="space-y-4">
+        <div class="flex items-center gap-2">
+            <div class="w-3 h-3 rounded-full bg-emerald-500"></div>
+            <h2 class="text-lg font-semibold text-dark-text">เสร็จแล้ววันนี้</h2>
+            <span class="badge bg-emerald-600">{{ completed.count }}</span>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {% for task in completed %}
+            <div class="card opacity-75 border-l-4 border-emerald-500">
+                <h3 class="font-medium text-dark-text line-clamp-1">{{ task.title }}</h3>
+                <div class="flex items-center gap-2 mt-2">
+                    <span class="badge status-completed">เสร็จแล้ว</span>
+                    {% if task.completed_at %}
+                    <span class="text-xs text-dark-muted">✅ {{ task.completed_at|date:"H:i" }}</span>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

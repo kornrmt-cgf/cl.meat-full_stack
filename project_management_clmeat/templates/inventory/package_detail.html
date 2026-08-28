@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}สินค้า #{{ package.pk }} - CL.MEAT{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>📦 {{ package.product.name }} {{ package.weight }} กก.</h1>
+    <a href="{% url 'inventory:package_list' %}" class="btn btn-outline">← กลับ</a>
+</div>
+
+<div class="detail-grid">
+    <div class="card">
+        <div class="card-header"><h4>📦 ข้อมูลสินค้า</h4></div>
+        <div class="card-body">
+            <table class="detail-table">
+                <tr><td>สินค้า:</td><td><strong>{{ package.product.name }}</strong></td></tr>
+                <tr><td>น้ำหนัก:</td><td>{{ package.weight }} กก.</td></tr>
+                <tr><td>บาร์โค้ด:</td><td><span class="font-mono">{{ package.barcode|default:"-" }}</span></td></tr>
+                <tr><td>ล็อต:</td><td>{{ package.batch.batch_number }}</td></tr>
+                <tr><td>สถานะ:</td><td><span class="status-badge status-{{ package.current_state|lower }}">{% if package.current_state == 'PACKED' %}📦 ยังไม่เข้าแช่{% elif package.current_state == 'FREEZING' %}🧊 กำลังแช่{% elif package.current_state == 'FROZEN' %}🧊 แช่แข็ง{% elif package.current_state == 'THAW_QUEUED' %}📋 ใส่คิวละลาย{% elif package.current_state == 'THAWING' %}💧 กำลังละลาย{% elif package.current_state == 'READY_FOR_SALE' %}🟢 พร้อมขาย{% elif package.current_state == 'ON_DISPLAY' %}🛒 วางจำหน่าย{% elif package.current_state == 'REFREEZE_PENDING' %}❄️ รอแช่แข็ง{% else %}{{ package.get_current_state_display }}{% endif %}</span></td></tr>
+                <tr><td>ที่เก็บ:</td><td>{{ package.storage_location|default:"-" }}</td></tr>
+                <tr><td>วันที่บรรจุ:</td><td>{{ package.packed_at|date:"d/m/Y H:i" }}</td></tr>
+            </table>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header"><h4>⚡ การดำเนินการ</h4></div>
+        <div class="card-body">
+            <div class="actions" style="flex-direction:column; gap:10px;">
+                {% if package.current_state == 'PACKED' or package.current_state == 'REFREEZE_PENDING' %}
+                    <button class="btn btn-primary btn-lg btn-block" onclick="confirmFreeze({{ package.pk }})">🧊 เริ่มแช่แข็ง</button>
+                {% endif %}
+                {% if package.current_state == 'FREEZING' %}
+                    <button class="btn btn-success btn-lg btn-block" onclick="confirmAction('แช่แข็งเสร็จสิ้น?', function(){ apiPost({{ package.pk }}, '/api/tasks/freeze/complete/') })">✅ เสร็จแช่แข็ง</button>
+                {% endif %}
+                {% if package.current_state == 'FROZEN' %}
+                    <button class="btn btn-warning btn-lg btn-block" onclick="showThawQueueModal({{ package.pk }})">📋 ใส่คิวละลาย</button>
+                {% endif %}
+                {% if package.current_state == 'THAW_QUEUED' %}
+                    <button class="btn btn-primary btn-lg btn-block" onclick="confirmAction('เริ่มละลายน้ำแข็ง?', function(){ apiPost({{ package.pk }}, '/api/tasks/thaw/start/') })">🔄 เริ่มละลาย</button>
+                {% endif %}
+                {% if package.current_state == 'THAWING' %}
+                    <button class="btn btn-success btn-lg btn-block" onclick="confirmAction('ละลายน้ำแข็งเสร็จ?', function(){ apiPost({{ package.pk }}, '/api/tasks/thaw/complete/') })">✅ เสร็จละลาย</button>
+                {% endif %}
+                {% if package.current_state == 'READY_FOR_SALE' %}
+                    <button class="btn btn-success btn-lg btn-block" onclick="confirmAction('ย้ายไปวางจำหน่าย?', function(){ apiPost({{ package.pk }}, '/api/tasks/display/start/') })">🛒 วางจำหน่าย</button>
+                {% endif %}
+                {% if package.current_state == 'ON_DISPLAY' %}
+                    <button class="btn btn-info btn-lg btn-block" onclick="confirmAction('นำกลับแช่แข็ง?', function(){ apiPost({{ package.pk }}, '/api/tasks/display/refreeze/') })">❄️ กลับแช่แข็ง</button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Timeline -->
+<div class="card">
+    <div class="card-header"><h4>📊 ประวัติการเปลี่ยนสถานะ</h4></div>
+    <div class="card-body">
+        {% if events %}
+        <div class="timeline">
+            {% for event in events %}
+            <div class="timeline-item">
+                <div class="timeline-marker"></div>
+                <strong>{{ event.from_state }}</strong> → <strong>{{ event.to_state }}</strong>
+                <span class="text-muted text-xs" style="margin-left:8px;">{{ event.timestamp|date:"d/m/Y H:i" }}</span>
+                {% if event.actor %}<span class="badge badge-viewer" style="margin-left:8px;">{{ event.actor }}</span>{% endif %}
+                {% if event.reason %}<br><span class="text-xs text-muted">{{ event.reason }}</span>{% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state" style="padding:20px;">
+            <p class="text-muted">ยังไม่มีประวัติ</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Thaw Queue Modal -->
+<div id="thaw-queue-modal" class="modal-overlay" style="display:none;">
+    <div class="modal">
+        <div class="modal-header">
+            <h3>📋 ใส่คิวละลายน้ำแข็ง</h3>
+            <button class="modal-close" onclick="closeThawQueueModal()">×</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label class="form-label">📅 วันที่ต้องการพร้อมขาย</label>
+                <input type="date" id="thaw-target-date" class="form-control">
+            </div>
+            <div class="form-group">
+                <label class="form-label">🕐 เวลาที่ต้องการพร้อมขาย</label>
+                <input type="time" id="thaw-target-time" class="form-control" value="10:00">
+            </div>
+            <div class="form-group">
+                <label class="form-label">👤 ชื่อพนักงาน</label>
+                <input type="text" id="thaw-actor" class="form-control" value="{{ user.get_full_name|default:user.username }}">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-outline" onclick="closeThawQueueModal()">ยกเลิก</button>
+            <button class="btn btn-primary" id="thaw-confirm-btn">✅ ยืนยันใส่คิว</button>
+        </div>
+    </div>
+</div>
+
+<script>
+function confirmFreeze(pkgId) {
+    confirmAction('เริ่มแช่แข็งสินค้านี้?', function() { apiPost(pkgId, '/api/tasks/freeze/start/'); });
+}
+
+function apiPost(pkgId, endpoint) {
+    apiCall(endpoint, 'POST', { package_id: pkgId, actor: '{{ user.get_full_name|default:"system" }}' })
+        .then(function(result) {
+            showToast(result.message || 'สำเร็จ', 'success');
+            setTimeout(function() { location.reload(); }, 800);
+        })
+        .catch(function(err) { showToast(err.message || 'เกิดข้อผิดพลาด', 'error'); });
+}
+
+var currentPkgId = null;
+function showThawQueueModal(pkgId) {
+    currentPkgId = pkgId;
+    document.getElementById('thaw-queue-modal').style.display = 'flex';
+}
+function closeThawQueueModal() {
+    document.getElementById('thaw-queue-modal').style.display = 'none';
+    currentPkgId = null;
+}
+document.addEventListener('DOMContentLoaded', function() {
+    var btn = document.getElementById('thaw-confirm-btn');
+    if (btn) {
+        btn.addEventListener('click', function() {
+            var date = document.getElementById('thaw-target-date').value;
+            var time = document.getElementById('thaw-target-time').value;
+            var actor = document.getElementById('thaw-actor').value;
+            if (!date) { showToast('กรุณาเลือกวันที่', 'warning'); return; }
+            apiCall('/api/plans/create/', 'POST', {
+                package_id: currentPkgId,
+                target_ready_at: date + 'T' + time + ':00',
+                freeze_profile_id: 1,
+                thaw_profile_id: 1,
+                actor: actor
+            }).then(function() {
+                return apiCall('/api/plans/queue/add/', 'POST', { package_id: currentPkgId, actor: actor });
+            }).then(function(result) {
+                closeThawQueueModal();
+                showToast('ใส่คิวละลายน้ำแข็งสำเร็จ ตำแหน่ง: #' + result.queue_position, 'success');
+                setTimeout(function() { location.reload(); }, 1000);
+            }).catch(function(err) {
+                showToast(err.message || 'เกิดข้อผิดพลาด', 'error');
+            });
+        });
+    }
+});
+</script>
+{% endblock %}

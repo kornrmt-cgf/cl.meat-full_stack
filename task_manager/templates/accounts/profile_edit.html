@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block title %}แก้ไขโปรไฟล์ - CL.MEAT TaskManager{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto">
+    <!-- Header -->
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold text-dark-text">✏️ แก้ไขโปรไฟล์</h1>
+        <p class="text-dark-muted mt-2">อัพเดทข้อมูลส่วนตัวของคุณ</p>
+    </div>
+
+    <!-- Form Card -->
+    <div class="card">
+        <form method="post" class="space-y-6">
+            {% csrf_token %}
+
+            <!-- Error messages -->
+            {% if form.errors %}
+            <div class="p-4 bg-red-900/30 border border-red-700 rounded-lg text-red-300 text-sm">
+                {% for field, errors in form.errors.items %}
+                <p><strong>{{ field }}:</strong> {{ errors.0 }}</p>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <!-- Name fields -->
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-dark-muted mb-2">ชื่อ</label>
+                    {{ form.first_name }}
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-dark-muted mb-2">นามสกุล</label>
+                    {{ form.last_name }}
+                </div>
+            </div>
+
+            <!-- Email -->
+            <div>
+                <label class="block text-sm font-medium text-dark-muted mb-2">อีเมล</label>
+                {{ form.email }}
+            </div>
+
+            <!-- Phone -->
+            <div>
+                <label class="block text-sm font-medium text-dark-muted mb-2">เบอร์โทรศัพท์</label>
+                {{ form.phone }}
+            </div>
+
+            <!-- Theme -->
+            <div>
+                <label class="block text-sm font-medium text-dark-muted mb-2">ธีม</label>
+                <div class="flex gap-4">
+                    {% for radio in form.theme %}
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        {{ radio }}
+                        <span class="text-dark-text">{{ radio.choice_label }}</span>
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- Actions -->
+            <div class="flex gap-4 pt-4">
+                <button type="submit" class="btn btn-primary">
+                    💾 บันทึก
+                </button>
+                <a href="{% url 'accounts:profile' %}" class="btn btn-ghost">
+                    ✕ ยกเลิก
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

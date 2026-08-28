@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+
+{% block title %}Performance Metrics - CL.MEAT TaskManager{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex items-center justify-between flex-wrap gap-4">
+        <div>
+            <h1 class="text-3xl font-bold text-dark-text">📈 Performance Metrics</h1>
+            <p class="text-dark-muted mt-1">ข้อมูลประสิทธิภาพการปฏิบัติงาน</p>
+        </div>
+    </div>
+
+    <!-- Filter -->
+    <div class="card">
+        <form method="get" class="flex flex-wrap gap-4 items-end">
+            <div>
+                <label class="block text-sm text-dark-muted mb-1">ตั้งแต่</label>
+                <input type="date" name="date_from" value="{{ date_from|date:'Y-m-d' }}" class="form-input">
+            </div>
+            <div>
+                <label class="block text-sm text-dark-muted mb-1">ถึง</label>
+                <input type="date" name="date_to" value="{{ date_to|date:'Y-m-d' }}" class="form-input">
+            </div>
+            <button type="submit" class="btn btn-primary text-sm">🔍 ค้นหา</button>
+        </form>
+    </div>
+
+    <!-- Key Metrics -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="card text-center hover-glow">
+            <p class="text-4xl font-bold text-primary-400">{{ completion_rate }}%</p>
+            <p class="text-sm text-dark-muted mt-2">Completion Rate</p>
+            <p class="text-xs text-dark-muted">เสร็จ / ทั้งหมด</p>
+        </div>
+        <div class="card text-center hover-glow">
+            <p class="text-4xl font-bold text-emerald-400">{{ on_time_rate }}%</p>
+            <p class="text-sm text-dark-muted mt-2">On-Time Rate</p>
+            <p class="text-xs text-dark-muted">เสร็จทันกำหนด / เสร็จทั้งหมด</p>
+        </div>
+        <div class="card text-center hover-glow">
+            <p class="text-4xl font-bold text-red-400">{{ problem_rate }}%</p>
+            <p class="text-sm text-dark-muted mt-2">Problem Rate</p>
+            <p class="text-xs text-dark-muted">มีปัญหา / ทั้งหมด</p>
+        </div>
+        <div class="card text-center hover-glow">
+            <p class="text-4xl font-bold text-red-500">{{ error_rate }}%</p>
+            <p class="text-sm text-dark-muted mt-2">Error Rate</p>
+            <p class="text-xs text-dark-muted">ข้อผิดพลาด / ทั้งหมด</p>
+        </div>
+    </div>
+
+    <!-- Detailed Metrics -->
+    <div class="card">
+        <h2 class="text-lg font-semibold text-dark-text mb-4">📊 รายละเอียด</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- Completion Rate Visual -->
+            <div>
+                <h3 class="text-sm text-dark-muted mb-2">Completion Rate</h3>
+                <div class="w-full bg-dark-bg rounded-full h-8">
+                    <div class="bg-emerald-500 h-8 rounded-full flex items-center justify-center text-white text-sm font-medium"
+                         style="width: {% widthratio completion_rate 100 100 %}%">
+                        {{ completion_rate }}%
+                    </div>
+                </div>
+                <p class="text-xs text-dark-muted mt-1">{{ total_completed }} / {{ total_tasks }} งาน</p>
+            </div>
+
+            <!-- On-Time Rate Visual -->
+            <div>
+                <h3 class="text-sm text-dark-muted mb-2">On-Time Completion Rate</h3>
+                <div class="w-full bg-dark-bg rounded-full h-8">
+                    <div class="bg-blue-500 h-8 rounded-full flex items-center justify-center text-white text-sm font-medium"
+                         style="width: {% widthratio on_time_rate 100 100 %}%">
+                        {{ on_time_rate }}%
+                    </div>
+                </div>
+            </div>
+
+            <!-- Problem Rate Visual -->
+            <div>
+                <h3 class="text-sm text-dark-muted mb-2">Problem Rate</h3>
+                <div class="w-full bg-dark-bg rounded-full h-8">
+                    <div class="bg-amber-500 h-8 rounded-full flex items-center justify-center text-white text-sm font-medium"
+                         style="width: {% widthratio problem_rate 100 100 %}%">
+                        {{ problem_rate }}%
+                    </div>
+                </div>
+            </div>
+
+            <!-- Error Rate Visual -->
+            <div>
+                <h3 class="text-sm text-dark-muted mb-2">Error Rate</h3>
+                <div class="w-full bg-dark-bg rounded-full h-8">
+                    <div class="bg-red-600 h-8 rounded-full flex items-center justify-center text-white text-sm font-medium"
+                         style="width: {% widthratio error_rate 100 100 %}%">
+                        {{ error_rate }}%
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Average Completion Time -->
+    {% if avg_completion_minutes %}
+    <div class="card">
+        <h2 class="text-lg font-semibold text-dark-text mb-4">⏱️ เวลาเฉลี่ยในการทำงาน</h2>
+        <div class="text-center">
+            <p class="text-4xl font-bold text-primary-400">{{ avg_completion_minutes }}</p>
+            <p class="text-sm text-dark-muted">นาที เฉลี่ยต่องาน</p>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Interpretation Note -->
+    <div class="card bg-dark-bg">
+        <p class="text-sm text-dark-muted">
+            <strong>หมายเหตุ:</strong> ตัวเลขเหล่านี้เป็นข้อมูลเชิงปฏิบัติการ ไม่ใช่การให้คะแนนพนักงาน
+            ใช้สำหรับทำความเข้าใจภาพรวมของการปฏิบัติงานเท่านั้น
+        </p>
+    </div>
+</div>
+{% endblock %}

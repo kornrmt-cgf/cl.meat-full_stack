@@ -1,0 +1,394 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}งานวันนี้ - CL.MEAT{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>📋 งานวันนี้</h1>
+    <div class="d-flex align-center gap-3">
+        <!-- Live Clock -->
+        <div class="live-clock" id="live-clock">
+            <div class="clock-time" id="clock-time">--:--:--</div>
+            <div class="clock-date" id="clock-date">--/--/----</div>
+            <div class="clock-tz">🕐 ICT (UTC+7)</div>
+        </div>
+        <!-- Toggle: All Tasks / Today Only -->
+        <button id="toggle-all-btn" class="btn btn-outline" onclick="toggleAllTasks()">
+            📋 งานทั้งหมด
+        </button>
+        <a href="{% url 'operations:history' %}" class="btn btn-outline">📜 ประวัติงาน</a>
+    </div>
+</div>
+
+<!-- ===== SERVER-RENDERED TODAY TASKS (default view) ===== -->
+<div id="today-view">
+<!-- Overdue -->
+{% if overdue %}
+<div class="card mb-6">
+    <div class="card-header" style="background:var(--danger-light);">
+        <h4>🔴 เกินกำหนด ({{ overdue|length }})</h4>
+    </div>
+    <div class="card-body">
+        <div class="task-list">
+            {% for task in overdue %}
+            <div class="task-card task-overdue" data-scheduled="{{ task.scheduled_at|date:'c' }}">
+                <div class="task-time">{{ task.scheduled_at|date:"H:i" }}</div>
+                <div class="task-info">
+                    <span class="task-type">{{ task.get_task_type_display }}</span>
+                    <span class="task-package">{{ task.package.display_name }} — {{ task.package.weight }} กก.</span>
+                </div>
+                <a href="{% url 'operations:task_complete' pk=task.pk %}" class="btn btn-danger btn-sm">✅ ทำเสร็จ</a>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Due Now -->
+{% if due %}
+<div class="card mb-6">
+    <div class="card-header" style="background:var(--warning-light);">
+        <h4>🟡 ถึงเวลาทำแล้ว ({{ due|length }})</h4>
+    </div>
+    <div class="card-body">
+        <div class="task-list">
+            {% for task in due %}
+            <div class="task-card task-due" data-scheduled="{{ task.scheduled_at|date:'c' }}">
+                <div class="task-time">{{ task.scheduled_at|date:"H:i" }}</div>
+                <div class="task-info">
+                    <span class="task-type">{{ task.get_task_type_display }}</span>
+                    <span class="task-package">{{ task.package.display_name }} — {{ task.package.weight }} กก.</span>
+                </div>
+                <a href="{% url 'operations:task_complete' pk=task.pk %}" class="btn btn-success btn-sm">✅ ทำเสร็จ</a>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Upcoming -->
+{% if upcoming %}
+<div class="card mb-6">
+    <div class="card-header">
+        <h4>🟢 งานที่กำลังจะมาถึง ({{ upcoming|length }})</h4>
+    </div>
+    <div class="card-body">
+        <div class="task-list">
+            {% for task in upcoming %}
+            <div class="task-card" data-scheduled="{{ task.scheduled_at|date:'c' }}">
+                <div class="task-time">{{ task.scheduled_at|date:"H:i" }}</div>
+                <div class="task-info">
+                    <span class="task-type">{{ task.get_task_type_display }}</span>
+                    <span class="task-package">{{ task.package.display_name }} — {{ task.package.weight }} กก.</span>
+                </div>
+                <div class="countdown-badge" data-target="{{ task.scheduled_at|date:'c' }}">กำลังคำนวณ...</div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if not overdue and not due and not upcoming %}
+<div class="empty-state">
+    <div class="empty-state-icon">📋</div>
+    <h3>ไม่มีงานวันนี้</h3>
+    <p>ระบบจะสร้างงานอัตโนมัติเมื่อมีแผนงาน</p>
+</div>
+{% endif %}
+</div>
+
+<!-- ===== ALL-TASKS DYNAMIC VIEW (hidden by default) ===== -->
+<div id="all-view" style="display:none;">
+    <div id="all-tasks-container"></div>
+</div>
+
+<!-- ===== SCRIPTS ===== -->
+<script>
+// ==================== LIVE CLOCK ====================
+(function() {
+    var THAI_DAYS = ['อาทิตย์','จันทร์','อังคาร','พุธ','พฤหัสฯ','ศุกร์','เสาร์'];
+    function pad(n) { return n < 10 ? '0' + n : '' + n; }
+
+    function updateClock() {
+        var now = new Date();
+        var utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+        var bkk = new Date(utc + (7 * 3600000));
+        document.getElementById('clock-time').textContent =
+            pad(bkk.getHours()) + ':' + pad(bkk.getMinutes()) + ':' + pad(bkk.getSeconds());
+        document.getElementById('clock-date').textContent =
+            pad(bkk.getDate()) + '/' + pad(bkk.getMonth()+1) + '/' + (bkk.getFullYear()+543) +
+            ' (' + THAI_DAYS[bkk.getDay()] + ')';
+    }
+    updateClock();
+    setInterval(updateClock, 1000);
+})();
+
+// ==================== COUNTDOWN TIMERS ====================
+function formatCountdown(ms) {
+    if (ms <= 0) return null;
+    var totalSec = Math.floor(ms / 1000);
+    var days = Math.floor(totalSec / 86400);
+    var hours = Math.floor((totalSec % 86400) / 3600);
+    var mins = Math.floor((totalSec % 3600) / 60);
+    var secs = totalSec % 60;
+    if (days > 0) return days + ' วัน ' + hours + ' ชม.';
+    if (hours > 0) return hours + ' ชม. ' + mins + ' นาที';
+    if (mins > 0) return mins + ' นาที ' + secs + ' วิ';
+    return secs + ' วิ';
+}
+
+function formatOverdue(ms) {
+    var totalSec = Math.floor(Math.abs(ms) / 1000);
+    var hours = Math.floor(totalSec / 3600);
+    var mins = Math.floor((totalSec % 3600) / 60);
+    if (hours > 0) return 'เกิน ' + hours + ' ชม. ' + mins + ' นาที';
+    return 'เกิน ' + mins + ' นาที';
+}
+
+function updateCountdowns() {
+    var now = new Date();
+    var badges = document.querySelectorAll('.countdown-badge');
+    badges.forEach(function(badge) {
+        var target = new Date(badge.dataset.target);
+        var diff = target - now;
+        if (diff <= 0) {
+            badge.textContent = '⏰ ถึงเวลา!';
+            badge.className = 'countdown-badge countdown-overdue';
+        } else {
+            badge.textContent = '⏳ อีก ' + formatCountdown(diff);
+            // Color intensity based on urgency
+            if (diff < 1800000) { // < 30 min
+                badge.className = 'countdown-badge countdown-urgent';
+            } else if (diff < 3600000) { // < 1 hour
+                badge.className = 'countdown-badge countdown-soon';
+            } else {
+                badge.className = 'countdown-badge countdown-normal';
+            }
+        }
+    });
+}
+
+updateCountdowns();
+setInterval(updateCountdowns, 1000);
+
+// ==================== TOGGLE ALL TASKS ====================
+var showingAll = false;
+
+function toggleAllTasks() {
+    if (showingAll) {
+        document.getElementById('today-view').style.display = '';
+        document.getElementById('all-view').style.display = 'none';
+        document.getElementById('toggle-all-btn').innerHTML = '📋 งานทั้งหมด';
+        showingAll = false;
+    } else {
+        loadAllTasks();
+    }
+}
+
+function loadAllTasks() {
+    var btn = document.getElementById('toggle-all-btn');
+    btn.innerHTML = '⏳ กำลังโหลด...';
+    btn.disabled = true;
+
+    fetch('/api/tasks/all/')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            renderAllTasks(data.tasks, data.count);
+            document.getElementById('today-view').style.display = 'none';
+            document.getElementById('all-view').style.display = '';
+            document.getElementById('toggle-all-btn').innerHTML = '📋 งานวันนี้';
+            document.getElementById('toggle-all-btn').disabled = false;
+            showingAll = true;
+        })
+        .catch(function(err) {
+            btn.innerHTML = '❌ โหลดไม่สำเร็จ';
+            btn.disabled = false;
+            setTimeout(function() { btn.innerHTML = '📋 งานทั้งหมด'; }, 2000);
+        });
+}
+
+function renderAllTasks(tasks, count) {
+    var container = document.getElementById('all-tasks-container');
+    if (!tasks || tasks.length === 0) {
+        container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📋</div><h3>ไม่มีงานค้าง</h3><p>ทุกงานเสร็จสิ้นแล้ว</p></div>';
+        return;
+    }
+
+    // Group by category
+    var groups = { overdue: [], due: [], today: [], future: [] };
+    tasks.forEach(function(t) {
+        var cat = t.category || 'future';
+        if (groups[cat]) groups[cat].push(t);
+        else groups.future.push(t);
+    });
+
+    var html = '';
+
+    // Overdue
+    if (groups.overdue.length > 0) {
+        html += '<div class="card mb-6"><div class="card-header" style="background:var(--danger-light);">';
+        html += '<h4>🔴 เกินกำหนด (' + groups.overdue.length + ')</h4></div><div class="card-body"><div class="task-list">';
+        groups.overdue.forEach(function(t) { html += renderTaskCard(t, 'overdue'); });
+        html += '</div></div></div>';
+    }
+
+    // Due now
+    if (groups.due.length > 0) {
+        html += '<div class="card mb-6"><div class="card-header" style="background:var(--warning-light);">';
+        html += '<h4>🟡 ถึงเวลาทำแล้ว (' + groups.due.length + ')</h4></div><div class="card-body"><div class="task-list">';
+        groups.due.forEach(function(t) { html += renderTaskCard(t, 'due'); });
+        html += '</div></div></div>';
+    }
+
+    // Today upcoming
+    if (groups.today.length > 0) {
+        html += '<div class="card mb-6"><div class="card-header">';
+        html += '<h4>🟢 วันนี้ (' + groups.today.length + ')</h4></div><div class="card-body"><div class="task-list">';
+        groups.today.forEach(function(t) { html += renderTaskCard(t, 'today'); });
+        html += '</div></div></div>';
+    }
+
+    // Future
+    if (groups.future.length > 0) {
+        html += '<div class="card mb-6"><div class="card-header">';
+        html += '<h4>📅 วันถัดไป (' + groups.future.length + ')</h4></div><div class="card-body"><div class="task-list">';
+        groups.future.forEach(function(t) { html += renderTaskCard(t, 'future'); });
+        html += '</div></div></div>';
+    }
+
+    // Summary bar
+    html = '<div class="all-tasks-summary">ทั้งหมด ' + count + ' งาน' +
+        ' | <span style="color:var(--danger)">เกินกำหนด ' + groups.overdue.length + '</span>' +
+        ' | <span style="color:var(--warning)">ถึงเวลา ' + groups.due.length + '</span>' +
+        ' | <span style="color:var(--success)">รอทำ ' + (groups.today.length + groups.future.length) + '</span></div>' + html;
+
+    container.innerHTML = html;
+
+    // Re-init countdowns for new elements
+    updateCountdowns();
+}
+
+function renderTaskCard(task, category) {
+    var cls = 'task-card';
+    if (category === 'overdue') cls += ' task-overdue';
+    else if (category === 'due') cls += ' task-due';
+
+    var right = '';
+    if (category === 'overdue' || category === 'due') {
+        right = '<a href="/operations/tasks/' + task.id + '/complete/" class="btn btn-' +
+            (category === 'overdue' ? 'danger' : 'success') + ' btn-sm">✅ ทำเสร็จ</a>';
+    } else {
+        right = '<div class="countdown-badge countdown-normal" data-target="' + task.scheduled_at_iso + '">⏳</div>';
+    }
+
+    var dateLabel = '';
+    if (category === 'future' && task.scheduled_at_iso) {
+        var d = new Date(task.scheduled_at_iso);
+        var bkk = new Date(d.getTime() + (d.getTimezoneOffset() * 60000) + (7 * 3600000));
+        dateLabel = ' <span class="text-muted text-sm">(' + pad2(bkk.getDate()) + '/' + pad2(bkk.getMonth()+1) + ')</span>';
+    }
+
+    return '<div class="' + cls + '">' +
+        '<div class="task-time">' + task.scheduled_at + '</div>' +
+        '<div class="task-info">' +
+            '<span class="task-type">' + task.task_type_display + '</span>' +
+            '<span class="task-package">' + task.package_name + dateLabel + '</span>' +
+        '</div>' + right + '</div>';
+}
+
+function pad2(n) { return n < 10 ? '0' + n : '' + n; }
+</script>
+
+<style>
+/* ===== Live Clock ===== */
+.live-clock {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: var(--sp-2) var(--sp-4);
+    min-width: 180px;
+}
+.clock-time {
+    font-size: 1.6rem;
+    font-weight: 700;
+    font-family: 'Courier New', monospace;
+    color: var(--text-primary);
+    letter-spacing: 2px;
+    line-height: 1.2;
+}
+.clock-date {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+.clock-tz {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    margin-top: 2px;
+    letter-spacing: 0.5px;
+}
+
+/* ===== Countdown Badges ===== */
+.countdown-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 12px;
+    border-radius: var(--radius-full);
+    font-size: 0.8rem;
+    font-weight: 600;
+    white-space: nowrap;
+    font-family: 'Courier New', monospace;
+}
+.countdown-normal {
+    background: rgba(34,197,94,0.12);
+    color: #22c55e;
+    border: 1px solid rgba(34,197,94,0.3);
+}
+.countdown-soon {
+    background: rgba(234,179,8,0.15);
+    color: #eab308;
+    border: 1px solid rgba(234,179,8,0.3);
+    animation: pulse-soft 2s ease-in-out infinite;
+}
+.countdown-urgent {
+    background: rgba(239,68,68,0.15);
+    color: #ef4444;
+    border: 1px solid rgba(239,68,68,0.3);
+    animation: pulse-soft 1.5s ease-in-out infinite;
+}
+.countdown-overdue {
+    background: rgba(239,68,68,0.25);
+    color: #ef4444;
+    border: 1px solid rgba(239,68,68,0.5);
+    font-weight: 700;
+}
+@keyframes pulse-soft {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+/* ===== All Tasks Summary Bar ===== */
+.all-tasks-summary {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: var(--sp-3) var(--sp-4);
+    margin-bottom: var(--sp-5);
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+/* ===== Task card date label ===== */
+.text-muted { color: var(--text-muted); }
+.text-sm { font-size: 0.75rem; }
+</style>
+
+{% endblock %}

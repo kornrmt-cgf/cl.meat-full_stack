@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block title %}รายการงาน - CL.MEAT TaskManager{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-3xl font-bold text-dark-text">📋 รายการงานทั้งหมด</h1>
+            <p class="text-dark-muted mt-1">มีงาน {{ tasks.count }} รายการ</p>
+        </div>
+        <a href="{% url 'tasks:create' %}" class="btn btn-primary">
+            ➕ สร้างงานใหม่
+        </a>
+    </div>
+
+    <!-- Task Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {% for task in tasks %}
+        <div class="card hover-glow cursor-pointer"
+             onclick="window.location='{% url 'tasks:detail' task.pk %}'">
+            <div class="flex items-start justify-between">
+                <div class="flex-1">
+                    <h3 class="font-semibold text-dark-text">{{ task.title }}</h3>
+                    {% if task.description %}
+                    <p class="text-sm text-dark-muted mt-1 line-clamp-2">{{ task.description }}</p>
+                    {% endif %}
+                    <div class="flex items-center gap-2 mt-3 flex-wrap">
+                        <span class="badge status-{{ task.status }}">{{ task.get_status_display }}</span>
+                        <span class="badge {{ task.priority_badge_class }}">{{ task.get_priority_display }}</span>
+                        {% if task.reward > 0 %}
+                        <span class="reward-badge text-[10px]">💰 ฿{{ task.reward|floatformat:0 }}</span>
+                        {% endif %}
+                        {% if task.is_open and not task.claimed_by %}
+                        <span class="badge bg-primary-600 text-[10px]">📢 เปิดรับ</span>
+                        {% endif %}
+                        {% if task.claimed_by %}
+                        <span class="badge bg-emerald-600 text-[10px]">✅ {{ task.claimed_by.display_name }}</span>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            {% if task.deadline %}
+            <p class="text-xs text-dark-muted mt-3">⏰ {{ task.deadline|date:"d/m H:i" }}</p>
+            {% endif %}
+
+            {% if task.location %}
+            <p class="text-xs text-dark-muted mt-1">📍 {{ task.location }}</p>
+            {% endif %}
+        </div>
+        {% empty %}
+        <div class="card text-center py-12 text-dark-muted col-span-full">
+            <p class="text-4xl mb-2">📭</p>
+            <p class="text-lg">ไม่มีงาน</p>
+            <a href="{% url 'tasks:create' %}" class="btn btn-primary mt-4">
+                ➕ สร้างงานใหม่
+            </a>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

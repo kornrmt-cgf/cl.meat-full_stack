@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}คลังสินค้า - CL.MEAT{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>📦 คลังสินค้า</h1>
+    <a href="{% url 'inventory:package_create' %}" class="btn btn-primary">➕ เพิ่มสินค้า</a>
+</div>
+
+<div class="filter-bar">
+    <form method="get">
+        <div class="form-group">
+            <label class="form-label">สินค้า</label>
+            <select name="product" class="form-select">
+                <option value="">ทั้งหมด</option>
+                {% for p in products %}
+                    <option value="{{ p.pk }}" {% if current_product_filter == p.pk|stringformat:"d" %}selected{% endif %}>{{ p.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group">
+            <label class="form-label">สถานะ</label>
+            <select name="state" class="form-select">
+                <option value="">ทั้งหมด</option>
+                <option value="PACKED" {% if current_state_filter == 'PACKED' %}selected{% endif %}>PACKED</option>
+                <option value="FREEZING" {% if current_state_filter == 'FREEZING' %}selected{% endif %}>FREEZING</option>
+                <option value="FROZEN" {% if current_state_filter == 'FROZEN' %}selected{% endif %}>FROZEN</option>
+                <option value="THAW_QUEUED" {% if current_state_filter == 'THAW_QUEUED' %}selected{% endif %}>THAW QUEUED</option>
+                <option value="THAWING" {% if current_state_filter == 'THAWING' %}selected{% endif %}>THAWING</option>
+                <option value="READY_FOR_SALE" {% if current_state_filter == 'READY_FOR_SALE' %}selected{% endif %}>READY FOR SALE</option>
+                <option value="ON_DISPLAY" {% if current_state_filter == 'ON_DISPLAY' %}selected{% endif %}>ON DISPLAY</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <button type="submit" class="btn btn-primary">🔍 ค้นหา</button>
+        </div>
+    </form>
+</div>
+
+<div class="table-container">
+    {% if packages %}
+    <div class="table-responsive">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th data-sortable>ID</th>
+                    <th data-sortable>สินค้า</th>
+                    <th data-sortable data-type="number">น้ำหนัก</th>
+                    <th data-sortable>บาร์โค้ด</th>
+                    <th data-sortable>ล็อต</th>
+                    <th data-sortable>สถานะ</th>
+                    <th data-sortable>ที่เก็บ</th>
+                    <th data-sortable>วันที่บรรจุ</th>
+                    <th>จัดการ</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for pkg in packages %}
+                <tr>
+                    <td><a href="{% url 'inventory:package_detail' pk=pkg.pk %}" style="font-weight:600;">{{ pkg.pk }}</a></td>
+                    <td><strong>{{ pkg.product.name }}</strong></td>
+                    <td>{{ pkg.weight }} กก.</td>
+                    <td><span class="font-mono text-xs">{{ pkg.barcode|default:"-" }}</span></td>
+                    <td class="text-xs">{{ pkg.batch.batch_number }}</td>
+                    <td><span class="status-badge status-{{ pkg.current_state|lower }}">{{ pkg.get_current_state_display }}</span></td>
+                    <td class="text-xs">{{ pkg.storage_location|default:"-" }}</td>
+                    <td class="text-xs">{{ pkg.packed_at|date:"d/m/Y H:i" }}</td>
+                    <td><a href="{% url 'inventory:package_detail' pk=pkg.pk %}" class="btn btn-sm btn-outline">ดู</a></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <div class="empty-state-icon">📦</div>
+        <h3>ยังไม่มีสินค้าในสถานะนี้</h3>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

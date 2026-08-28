@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+
+{% block title %}สมัครพนักงานใหม่ - CL.MEAT TaskManager{% endblock %}
+
+{% block auth_content %}
+<div class="w-full max-w-md mx-auto px-4">
+
+    <!-- Register Card -->
+    <div class="bg-dark-surface rounded-2xl border border-dark-border p-8 shadow-2xl">
+
+        <!-- Logo -->
+        <div class="text-center mb-8">
+            <div class="w-16 h-16 bg-primary-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <span class="text-white text-2xl font-bold">FB</span>
+            </div>
+            <h1 class="text-2xl font-bold text-dark-text">📝 สมัครพนักงานใหม่</h1>
+            <p class="text-dark-muted mt-2">สร้างบัญชีเพื่อเริ่มใช้งานระบบ</p>
+        </div>
+
+        <!-- Register Form -->
+        <form method="post" class="space-y-4">
+            {% csrf_token %}
+
+            <!-- Error messages -->
+            {% if form.errors %}
+            <div class="p-4 bg-red-900/30 border border-red-700 rounded-lg text-red-300 text-sm space-y-1">
+                {% for field, errors in form.errors.items %}
+                <p>❌ <strong>{{ field }}:</strong> {{ errors.0 }}</p>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <!-- Userid -->
+            <div>
+                <label class="block text-sm font-medium text-dark-muted mb-2">👤 รหัสผู้ใช้ *</label>
+                {{ form.userid }}
+                <p class="text-xs text-dark-muted mt-1">ตั้งรหัสสำหรับเข้าสู่ระบบ (อย่างน้อย 3 ตัวอักษร)</p>
+                {% if form.userid.errors %}
+                <p class="text-red-400 text-sm mt-1">{{ form.userid.errors.0 }}</p>
+                {% endif %}
+            </div>
+
+            <!-- Name -->
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-sm font-medium text-dark-muted mb-2">ชื่อ *</label>
+                    {{ form.first_name }}
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-dark-muted mb-2">นามสกุล *</label>
+                    {{ form.last_name }}
+                </div>
+            </div>
+
+            <!-- Email -->
+            <div>
+                <label class="block text-sm font-medium text-dark-muted mb-2">📧 อีเมล</label>
+                {{ form.email }}
+            </div>
+
+            <!-- Phone -->
+            <div>
+                <label class="block text-sm font-medium text-dark-muted mb-2">📱 เบอร์โทรศัพท์</label>
+                {{ form.phone }}
+            </div>
+
+            <!-- Password -->
+            <div>
+                <label class="block text-sm font-medium text-dark-muted mb-2">🔑 รหัสผ่าน *</label>
+                {{ form.password }}
+                {% if form.password.errors %}
+                <p class="text-red-400 text-sm mt-1">{{ form.password.errors.0 }}</p>
+                {% endif %}
+            </div>
+
+            <!-- Password Confirm -->
+            <div>
+                <label class="block text-sm font-medium text-dark-muted mb-2">🔑 ยืนยันรหัสผ่าน *</label>
+                {{ form.password_confirm }}
+                {% if form.password_confirm.errors %}
+                <p class="text-red-400 text-sm mt-1">{{ form.password_confirm.errors.0 }}</p>
+                {% endif %}
+            </div>
+
+            <!-- Submit Button -->
+            <button type="submit"
+                    class="btn btn-primary w-full text-base py-3 mt-4">
+                🎉 สมัครสมาชิก
+            </button>
+        </form>
+
+        <!-- Login Link -->
+        <div class="mt-6 text-center">
+            <p class="text-dark-muted text-sm">
+                มีบัญชีอยู่แล้ว?
+                <a href="{% url 'accounts:login' %}"
+                   class="text-primary-400 hover:text-primary-300 font-medium transition-colors">
+                    เข้าสู่ระบบ
+                </a>
+            </p>
+        </div>
+    </div>
+</div>
+{% endblock %}

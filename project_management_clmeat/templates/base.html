@@ -1,0 +1,36 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}ระบบจัดการเนื้อสด{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{% static 'css/base.css' %}?v=2">
+    <link rel="stylesheet" href="{% static 'css/components.css' %}?v=2">
+    {% block extra_css %}{% endblock %}
+    <script>
+        /* Apply theme immediately to prevent flash */
+        (function(){
+            var c = document.cookie.match(/(^| )fmp_theme=([^;]+)/);
+            var t = c ? c[2] : (matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light');
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+</head>
+<body>
+    {% include "includes/navbar.html" %}
+
+    <div class="page-wrapper">
+        {% include "includes/messages.html" %}
+        {% block content %}{% endblock %}
+    </div>
+
+    {% csrf_token %}
+    {% include "includes/modal.html" %}
+
+    <script src="{% static 'js/base.js' %}"></script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

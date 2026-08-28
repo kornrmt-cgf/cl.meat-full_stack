@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+
+{% block title %}ตารางสัปดาห์ (จัดการ) - CL.MEAT TaskManager{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex items-center justify-between flex-wrap gap-4">
+        <div>
+            <h1 class="text-3xl font-bold text-dark-text">📊 ตารางสัปดาห์</h1>
+            <p class="text-dark-muted mt-1">{{ monday|date:"d M" }} – {{ sunday|date:"d M Y" }}</p>
+        </div>
+        <div class="flex items-center gap-2">
+            <a href="?date={{ prev_week|date:'Y-m-d' }}{% if selected_employee %}&employee={{ selected_employee.pk }}{% endif %}" class="btn btn-ghost text-sm">← สัปดาห์ก่อน</a>
+            <a href="?date={{ today|date:'Y-m-d' }}" class="btn btn-primary text-sm">วันนี้</a>
+            <a href="?date={{ next_week|date:'Y-m-d' }}{% if selected_employee %}&employee={{ selected_employee.pk }}{% endif %}" class="btn btn-ghost text-sm">สัปดาห์ถัดไป →</a>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card">
+        <div class="flex flex-wrap gap-4 items-end">
+            <div class="flex-1 min-w-[200px]">
+                <label class="block text-sm font-medium text-dark-muted mb-1">พนักงาน</label>
+                <select class="form-input" onchange="updateFilter('employee', this.value)">
+                    <option value="">ทุกคน</option>
+                    {% for emp in employees %}
+                    <option value="{{ emp.pk }}" {% if selected_employee and selected_employee.pk == emp.pk %}selected{% endif %}>
+                        {{ emp.display_name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="flex-1 min-w-[200px]">
+                <label class="block text-sm font-medium text-dark-muted mb-1">ทีม</label>
+                <select class="form-input" onchange="updateFilter('team', this.value)">
+                    <option value="">ทุกทีม</option>
+                    {% for t in teams %}
+                    <option value="{{ t.pk }}" {% if selected_team and selected_team.pk == t.pk %}selected{% endif %}>
+                        {{ t.name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <!-- Week Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-7 gap-3">
+        {% for date, day_tasks in schedule.items %}
+        <div class="rounded-xl border {% if date == today %}border-primary-500 bg-primary-900/20{% else %}border-dark-border bg-dark-surface{% endif %} p-3 min-h-[300px]">
+            <div class="flex items-center justify-between mb-3">
+                <div>
+                    <p class="text-xs text-dark-muted">{{ date|date:"D" }}</p>
+                    <p class="font-semibold {% if date == today %}text-primary-400{% else %}text-dark-text{% endif %}">
+                        {{ date|date:"d M" }}
+                    </p>
+                </div>
+                <span class="text-xs bg-dark-card text-dark-muted px-2 py-0.5 rounded-full">{{ day_tasks.count }}</span>
+            </div>
+
+            <div class="space-y-2">
+                {% for task in day_tasks %}
+                <a href="{% url 'tasks:detail' task.pk %}"
+                   class="block p-2 rounded-lg border border-dark-border hover:border-primary-500 transition-colors
+                          {% if task.status == 'in_progress' %}bg-amber-900/30 border-amber-600
+                          {% elif task.status == 'problem' %}bg-red-900/30 border-red-600
+                          {% elif task.status == 'completed' %}bg-emerald-900/30 opacity-75
+                          {% else %}bg-dark-card{% endif %}">
+                    <p class="text-xs font-medium text-dark-text line-clamp-2">{{ task.title }}</p>
+                    <div class="flex items-center gap-1 mt-1 flex-wrap">
+                        <span class="text-[10px] px-1.5 py-0.5 rounded status-{{ task.status }}">
+                            {{ task.get_status_display }}
+                        </span>
+                        {% if task.start_at %}
+                        <span class="text-[10px] text-dark-muted">{{ task.start_at|date:"H:i" }}</span>
+                        {% endif %}
+                    </div>
+                    {% for a in task.assignments.all %}
+                    <span class="text-[10px] text-primary-400">👤 {{ a.assigned_to.display_name }}</span>
+                    {% endfor %}
+                </a>
+                {% empty %}
+                <p class="text-xs text-dark-muted text-center py-4">-</p>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    function updateFilter(param, value) {
+        const url = new URL(window.location);
+        if (value) {
+            url.searchParams.set(param, value);
+        } else {
+            url.searchParams.delete(param);
+        }
+        window.location = url;
+    }
+</script>
+{% endblock %}

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}สถานที่เก็บ - CL.MEAT{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>🏠 สถานที่เก็บ</h1>
+    <a href="{% url 'inventory:location_create' %}" class="btn btn-primary">➕ เพิ่มสถานที่</a>
+</div>
+<div class="table-container">
+    {% if locations %}
+    <div class="table-responsive">
+        <table class="data-table">
+            <thead><tr><th data-sortable>ชื่อ</th><th data-sortable>ประเภท</th><th data-sortable data-type="number">ความจุ</th><th data-sortable data-type="number">ปัจจุบัน</th><th data-sortable data-type="number">ว่าง</th><th data-sortable>สถานะ</th></tr></thead>
+            <tbody>
+                {% for loc in locations %}
+                <tr>
+                    <td><strong>{{ loc.name }}</strong></td>
+                    <td>{{ loc.get_location_type_display }}</td>
+                    <td>{{ loc.capacity }}</td>
+                    <td>{{ loc.current_count }}</td>
+                    <td>{{ loc.available_capacity }}</td>
+                    <td>{% if loc.active %}<span class="badge badge-active">ใช้งาน</span>{% else %}<span class="badge badge-inactive">ปิด</span>{% endif %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}<div class="empty-state"><div class="empty-state-icon">🏠</div><h3>ยังไม่มีสถานที่เก็บ</h3></div>{% endif %}
+</div>
+{% endblock %}

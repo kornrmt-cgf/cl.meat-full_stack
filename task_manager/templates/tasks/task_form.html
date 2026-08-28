@@ -1,0 +1,368 @@
+{% extends "base.html" %}
+
+{% block title %}{% if form.instance.pk %}แก้ไขงาน{% else %}สร้างงานใหม่{% endif %} - CL.MEAT TaskManager{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto space-y-6">
+    <div>
+        <a href="{% url 'tasks:today' %}" class="text-dark-muted hover:text-dark-text text-sm mb-3 inline-flex items-center gap-1 transition-colors">
+            ← กลับ
+        </a>
+        <h1 class="text-3xl font-bold text-dark-text">
+            {% if form.instance.pk %}✏️ แก้ไขงาน{% else %}➕ สร้างงานใหม่{% endif %}
+        </h1>
+    </div>
+
+    <div class="card">
+        <form method="post" class="space-y-6">
+            {% csrf_token %}
+
+            {% if form.errors %}
+            <div class="p-4 bg-red-900/30 border-2 border-red-600 rounded-xl text-red-200 text-sm space-y-1">
+                {% for field, errors in form.errors.items %}
+                <p class="font-semibold">❌ {{ field }}: {{ errors.0 }}</p>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <!-- Section: ข้อมูลงาน -->
+            <div class="space-y-4">
+                <div class="flex items-center gap-2 pb-2 border-b-2 border-dark-border">
+                    <span class="text-xl">📋</span>
+                    <h2 class="text-lg font-bold text-dark-text">ข้อมูลงาน</h2>
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-dark-text mb-2">ชื่องาน *</label>
+                    {{ form.title }}
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-dark-text mb-2">รายละเอียด</label>
+                    {{ form.description }}
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-semibold text-dark-text mb-2">หมวดหมู่</label>
+                        {{ form.category }}
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-dark-text mb-2">ความสำคัญ</label>
+                        {{ form.priority }}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Section: โหมดงาน -->
+            <div class="space-y-4">
+                <div class="flex items-center gap-2 pb-2 border-b-2 border-dark-border">
+                    <span class="text-xl">🎯</span>
+                    <h2 class="text-lg font-bold text-dark-text">โหมดงาน</h2>
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-dark-text mb-3">เลือกวิธีมอบหมายงาน</label>
+                    <div class="work-mode-radio">
+                        <label>
+                            <input type="radio" name="work_mode" value="assigned" checked
+                                   onchange="toggleWorkMode('assigned')">
+                            👤 มอบหมายเฉพาะคน
+                        </label>
+                        <label>
+                            <input type="radio" name="work_mode" value="open"
+                                   onchange="toggleWorkMode('open')">
+                            📢 เปิดให้แย่งงาน
+                        </label>
+                    </div>
+                </div>
+                <div id="reward-section" class="hidden">
+                    <label class="block text-sm font-semibold text-dark-text mb-2">💰 ค่าตอบแทน (บาท)</label>
+                    <div class="relative">
+                        <span class="absolute left-4 top-1/2 -translate-y-1/2 text-dark-muted font-bold text-lg">฿</span>
+                        {{ form.reward }}
+                    </div>
+                    <p class="text-xs text-dark-muted mt-2">กำหนดค่าตอบแทนสำหรับงานนี้ พนักงานจะเห็นค่าตอบแทนก่อนแย่งงาน</p>
+                </div>
+                <div id="employees-section">
+                    <label class="block text-sm font-semibold text-dark-text mb-3">👥 เลือกพนักงาน</label>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {% for profile in form.assigned_to.field.queryset %}
+                        <label class="flex items-center gap-3 p-3 bg-dark-surface rounded-xl border-2 border-dark-border
+                                      hover:border-primary-500 transition-all cursor-pointer">
+                            <input type="checkbox" name="assigned_to" value="{{ profile.pk }}"
+                                   class="employee-checkbox">
+                            <div class="flex items-center gap-3 flex-1 min-w-0">
+                                <div class="w-9 h-9 bg-primary-600 rounded-full flex items-center justify-center flex-shrink-0 shadow-md">
+                                    <span class="text-white text-sm font-bold">{{ profile.user.initials }}</span>
+                                </div>
+                                <div class="min-w-0">
+                                    <p class="text-sm font-semibold text-dark-text truncate">{{ profile.user.display_name }}</p>
+                                    {% if profile.team %}
+                                    <p class="text-xs text-dark-muted">🏢 {{ profile.team.name }}</p>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </label>
+                        {% endfor %}
+                    </div>
+                    {% if not form.assigned_to.field.queryset %}
+                    <p class="text-sm text-dark-muted py-4 text-center">ไม่มีพนักงานที่ active ในระบบ</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Section: เวลา -->
+            <div class="space-y-4">
+                <div class="flex items-center gap-2 pb-2 border-b-2 border-dark-border">
+                    <span class="text-xl">⏰</span>
+                    <h2 class="text-lg font-bold text-dark-text">กำหนดเวลา</h2>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-semibold text-dark-text mb-2">📅 วันที่งาน</label>
+                    <div class="flex gap-2">
+                        {{ form.task_date }}
+                        <button type="button" onclick="setToday()" class="btn btn-ghost btn-sm whitespace-nowrap">📅 วันนี้</button>
+                        <button type="button" onclick="setTomorrow()" class="btn btn-ghost btn-sm whitespace-nowrap">📅 พรุ่งนี้</button>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-sm font-semibold text-dark-text mb-2">🔧 เตรียมงาน</label>
+                        {{ form.prepare_time }}
+                        <p class="text-xs text-dark-muted mt-1">เวลาที่ควรเริ่มเตรียม</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-dark-text mb-2">▶️ เริ่มงาน</label>
+                        {{ form.start_time }}
+                        <p class="text-xs text-dark-muted mt-1">เวลาเริ่มทำงานจริง</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-dark-text mb-2">⏰ กำหนดส่ง</label>
+                        {{ form.deadline_time }}
+                        <p class="text-xs text-dark-muted mt-1">กำหนดส่งงาน</p>
+                    </div>
+                </div>
+
+                <!-- Schedule summary -->
+                <div id="schedule-summary" class="p-4 bg-primary-600/10 border-2 border-primary-500/30 rounded-xl hidden">
+                    <p class="text-sm font-bold text-primary-400 mb-2">📅 สรุปเวลา</p>
+                    <div class="space-y-1 text-sm text-dark-text">
+                        <p id="summary-date"></p>
+                        <p id="summary-prepare"></p>
+                        <p id="summary-start"></p>
+                        <p id="summary-deadline"></p>
+                        <p id="summary-estimated" class="mt-2 text-primary-400 font-bold"></p>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-semibold text-dark-text mb-2">⏱ เวลาที่คาด (นาที)</label>
+                        {{ form.estimated_minutes }}
+                        <p class="text-xs text-dark-muted mt-1" id="estimated-hint"></p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-dark-text mb-2">📍 สถานที่</label>
+                        {{ form.location }}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Section: หมายเหตุ -->
+            <div class="space-y-4">
+                <div class="flex items-center gap-2 pb-2 border-b-2 border-dark-border">
+                    <span class="text-xl">📝</span>
+                    <h2 class="text-lg font-bold text-dark-text">หมายเหตุ</h2>
+                </div>
+                <div>
+                    {{ form.notes }}
+                </div>
+            </div>
+
+            <!-- Actions -->
+            <div class="flex gap-4 pt-4 border-t-2 border-dark-border">
+                <button type="submit" class="btn btn-primary flex-1 text-base py-3">
+                    💾 บันทึกงาน
+                </button>
+                <a href="{% url 'tasks:today' %}" class="btn btn-ghost">
+                    ✕ ยกเลิก
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    function toggleWorkMode(mode) {
+        const rewardSection = document.getElementById('reward-section');
+        const employeesSection = document.getElementById('employees-section');
+        if (mode === 'open') {
+            rewardSection.classList.remove('hidden');
+            employeesSection.classList.add('hidden');
+        } else {
+            rewardSection.classList.add('hidden');
+            employeesSection.classList.remove('hidden');
+        }
+    }
+
+    function getLocalDateStr(date) {
+        const y = date.getFullYear();
+        const m = String(date.getMonth() + 1).padStart(2, '0');
+        const d = String(date.getDate()).padStart(2, '0');
+        return y + '-' + m + '-' + d;
+    }
+
+    function setToday() {
+        const today = getLocalDateStr(new Date());
+        document.querySelector('input[name="task_date"]').value = today;
+        updateScheduleSummary();
+    }
+
+    function setTomorrow() {
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        document.querySelector('input[name="task_date"]').value = getLocalDateStr(tomorrow);
+        updateScheduleSummary();
+    }
+
+    // === Time Auto-Calculation ===
+    // Get time value from time input (HH:MM)
+    function getDateTimeValue(name) {
+        const el = document.querySelector('input[name="' + name + '"]');
+        if (!el) return null;
+        const val = el.value;
+        if (!val) return null;
+
+        const match = val.match(/(\d{2}):(\d{2})/);
+        if (match) {
+            return { hours: parseInt(match[1]), minutes: parseInt(match[2]), total: parseInt(match[1]) * 60 + parseInt(match[2]) };
+        }
+        return null;
+    }
+
+    function setDateTimeValue(name, hours, minutes) {
+        const el = document.querySelector('input[name="' + name + '"]');
+        if (!el) return;
+        el.value = String(hours).padStart(2, '0') + ':' + String(minutes).padStart(2, '0');
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    function getTotalMinutes(name) {
+        const v = getDateTimeValue(name);
+        return v ? v.total : null;
+    }
+
+    function formatMinutes(mins) {
+        const h = Math.floor(mins / 60);
+        const m = mins % 60;
+        return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+    }
+
+    function onTimeFieldChanged(fieldName) {
+        const startMin = getTotalMinutes('start_time');
+        const deadlineMin = getTotalMinutes('deadline_time');
+        const estEl = document.querySelector('input[name="estimated_minutes"]');
+        const estVal = parseInt(estEl.value) || 0;
+
+        if (fieldName === 'start_time' || fieldName === 'estimated_minutes') {
+            // deadline = start_at + estimated_minutes
+            if (startMin !== null && estVal > 0) {
+                const newDeadline = startMin + estVal;
+                if (newDeadline <= 24 * 60) {
+                    const h = Math.floor(newDeadline / 60);
+                    const m = newDeadline % 60;
+                    setDateTimeValue('deadline_time', h, m);
+                }
+            }
+        } else if (fieldName === 'deadline_time') {
+            // estimated_minutes = deadline - start_at
+            if (startMin !== null && deadlineMin !== null && deadlineMin > startMin) {
+                estEl.value = deadlineMin - startMin;
+            }
+        }
+
+        updateScheduleSummary();
+        updateEstimatedHint();
+    }
+
+    function updateEstimatedHint() {
+        const startMin = getTotalMinutes('start_at');
+        const deadlineMin = getTotalMinutes('deadline');
+        const hint = document.getElementById('estimated-hint');
+        if (!hint) return;
+
+        if (startMin !== null && deadlineMin !== null && deadlineMin > startMin) {
+            const diff = deadlineMin - startMin;
+            const h = Math.floor(diff / 60);
+            const m = diff % 60;
+            let parts = [];
+            if (h > 0) parts.push(h + ' ชั่วโมง');
+            if (m > 0) parts.push(m + ' นาที');
+            hint.textContent = '📊 = ' + parts.join(' ');
+        } else {
+            hint.textContent = '';
+        }
+    }
+
+    function updateScheduleSummary() {
+        const date = document.querySelector('input[name="task_date"]').value;
+        const summary = document.getElementById('schedule-summary');
+        if (!date) { summary.classList.add('hidden'); return; }
+
+        summary.classList.remove('hidden');
+        document.getElementById('summary-date').textContent = '📅 ' + formatDateThai(date);
+
+        const prepareVal = getDateTimeValue('prepare_time');
+        const startVal = getDateTimeValue('start_time');
+        const deadlineVal = getDateTimeValue('deadline_time');
+
+        const labels = { prepare: '🔧 เตรียมงาน', start: '▶️ เริ่มงาน', deadline: '⏰ กำหนดส่ง' };
+        ['prepare', 'start', 'deadline'].forEach(t => {
+            const el = document.getElementById('summary-' + t);
+            const val = t === 'prepare' ? prepareVal : (t === 'start' ? startVal : deadlineVal);
+            if (val) {
+                el.textContent = labels[t] + ': ' + formatMinutes(val.total);
+                el.classList.remove('hidden');
+            } else {
+                el.classList.add('hidden');
+            }
+        });
+
+        const estEl = document.querySelector('input[name="estimated_minutes"]');
+        const estVal = parseInt(estEl.value) || 0;
+        const estP = document.getElementById('summary-estimated');
+        if (estVal > 0 && startVal && deadlineVal) {
+            estP.textContent = '⏱ ระยะเวลา: ' + estVal + ' นาที';
+            estP.classList.remove('hidden');
+        } else {
+            estP.classList.add('hidden');
+        }
+    }
+
+    function formatDateThai(dateStr) {
+        const d = new Date(dateStr + 'T00:00:00');
+        const days = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'];
+        const months = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+        return days[d.getDay()] + ' ' + d.getDate() + ' ' + months[d.getMonth()] + ' ' + (d.getFullYear() + 543);
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const startEl = document.querySelector('input[name="start_time"]');
+        const deadlineEl = document.querySelector('input[name="deadline_time"]');
+        const estEl = document.querySelector('input[name="estimated_minutes"]');
+
+        if (startEl) startEl.addEventListener('change', () => onTimeFieldChanged('start_time'));
+        if (deadlineEl) deadlineEl.addEventListener('change', () => onTimeFieldChanged('deadline_time'));
+        if (estEl) estEl.addEventListener('input', () => onTimeFieldChanged('estimated_minutes'));
+
+        ['task_date', 'prepare_time'].forEach(name => {
+            const el = document.querySelector('input[name="' + name + '"]');
+            if (el) el.addEventListener('change', updateScheduleSummary);
+        });
+
+        updateScheduleSummary();
+        updateEstimatedHint();
+    });
+</script>
+{% endblock %}

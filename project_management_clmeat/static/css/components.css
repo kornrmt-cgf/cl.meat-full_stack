@@ -1,0 +1,128 @@
+/* ===================================================================
+   Fresh Meat Rotation Planner — Component Overrides & Extras
+   =================================================================== */
+
+/* Dashboard Grid */
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+    gap: var(--sp-6);
+}
+@media (max-width: 768px) {
+    .dashboard-grid { grid-template-columns: 1fr; }
+}
+
+.dashboard-section {
+    background: var(--bg-card);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    padding: var(--sp-6);
+}
+.dashboard-section h2 {
+    margin-bottom: var(--sp-5);
+    font-size: var(--text-lg);
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+/* Form Container */
+.form-container {
+    max-width: 700px;
+}
+.form-actions {
+    display: flex;
+    gap: var(--sp-3);
+    margin-top: var(--sp-6);
+}
+
+/* Calendar */
+.calendar-table td {
+    text-align: center;
+    vertical-align: middle;
+}
+.calendar-table tr.row-warning td { background: var(--warning-light); }
+.calendar-table tr.row-success td { background: var(--success-light); }
+
+/* Date Nav */
+.date-nav {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+}
+.date-nav h3 {
+    min-width: 200px;
+    text-align: center;
+}
+
+/* Actions */
+.actions {
+    display: flex;
+    gap: var(--sp-2);
+    flex-wrap: wrap;
+}
+
+/* Progress */
+.progress {
+    height: 8px;
+    background: var(--gray-200);
+    border-radius: var(--radius-full);
+    overflow: hidden;
+}
+.progress-bar {
+    height: 100%;
+    background: var(--primary);
+    border-radius: var(--radius-full);
+    transition: width 0.3s ease;
+}
+
+/* Loading Spinner */
+.spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--gray-200);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Confirm Dialog */
+.confirm-dialog { text-align: center; }
+.confirm-dialog p { margin-bottom: var(--sp-5); font-size: var(--text-base); }
+.confirm-dialog .actions { justify-content: center; }
+
+/* Tooltip */
+.tooltip { position: relative; cursor: help; }
+.tooltip::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--gray-800);
+    color: white;
+    padding: var(--sp-1) var(--sp-2);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--transition-fast);
+    z-index: var(--z-dropdown);
+}
+.tooltip:hover::after { opacity: 1; }
+
+/* User Table specific */
+.user-role-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+/* Responsive tweaks */
+@media (max-width: 768px) {
+    .form-container { max-width: 100%; }
+    .date-nav { flex-direction: column; }
+    .date-nav h3 { min-width: auto; }
+}

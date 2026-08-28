@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}แผนงาน #{{ plan.id }} - CL.MEAT{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>📋 แผนงาน #{{ plan.id }}</h1>
+    <div class="d-flex gap-3">
+        {% if can_edit %}
+        <a href="{% url 'planning:plan_edit' pk=plan.pk %}" class="btn btn-primary">✏️ แก้ไขแผนงาน</a>
+        {% endif %}
+        <a href="{% url 'planning:plan_list' %}" class="btn btn-outline">← กลับ</a>
+    </div>
+</div>
+
+{% if integrity_warning %}
+<div class="alert alert-error">
+    <span>{{ integrity_warning }}</span>
+</div>
+{% endif %}
+
+<div class="detail-grid">
+    <!-- Package Info -->
+    <div class="card">
+        <div class="card-header"><h4>📦 ข้อมูลสินค้า</h4></div>
+        <div class="card-body">
+            <table class="detail-table">
+                <tr><td>สินค้า:</td><td><strong>{{ plan.package.product.name }}</strong></td></tr>
+                <tr><td>น้ำหนัก:</td><td>{{ plan.package.weight }} กก.</td></tr>
+                <tr><td>บาร์โค้ด:</td><td><span class="font-mono">{{ plan.package.barcode|default:"-" }}</span></td></tr>
+                <tr><td>ล็อต:</td><td>{{ plan.package.batch.batch_number }}</td></tr>
+                <tr><td>สถานะ:</td><td><span class="status-badge status-{{ plan.package.current_state|lower }}">{{ plan.package.get_current_state_display }}</span></td></tr>
+                <tr><td>ที่เก็บ:</td><td>{{ plan.package.storage_location|default:"-" }}</td></tr>
+            </table>
+        </div>
+    </div>
+
+    <!-- Plan Info -->
+    <div class="card">
+        <div class="card-header"><h4>📋 ข้อมูลแผนงาน</h4></div>
+        <div class="card-body">
+            <table class="detail-table">
+                <tr><td>สถานะแผน:</td><td><span class="status-badge status-{{ plan.status|lower }}">{{ plan.status }}</span></td></tr>
+                <tr><td>📅 กำหนดพร้อมขาย:</td><td><strong>{{ plan.target_ready_at|date:"d/m/Y H:i" }}</strong></td></tr>
+                <tr><td>💧 เริ่มละลาย:</td><td>{{ plan.planned_thaw_start_at|date:"d/m/Y H:i" }}</td></tr>
+                <tr><td>📋 เข้าคิว:</td><td>{{ plan.planned_thaw_queue_at|date:"d/m/Y H:i" }}</td></tr>
+                <tr><td>🧊 เริ่มแช่แข็ง:</td><td>{{ plan.planned_freeze_start_at|date:"d/m/Y H:i" }}</td></tr>
+                <tr><td>🧊 สิ้นสุดแช่แข็ง:</td><td>{{ plan.planned_freeze_end_at|date:"d/m/Y H:i" }}</td></tr>
+                <tr><td>⏱ ระยะเวลาแช่แข็ง:</td><td>{{ plan.freeze_duration }}</td></tr>
+                <tr><td>⏱ ระยะเวลาละลาย:</td><td>{{ plan.thaw_duration }}</td></tr>
+                <tr><td>🧊 โปรไฟล์แช่แข็ง:</td><td>{{ plan.freeze_profile.name }}</td></tr>
+                <tr><td>💧 โปรไฟล์ละลาย:</td><td>{{ plan.thaw_profile.name }}</td></tr>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Queue Entry -->
+{% if queue_entry %}
+<div class="card mb-6">
+    <div class="card-header"><h4>🔀 คิวละลายน้ำแข็ง</h4></div>
+    <div class="card-body">
+        <table class="detail-table" style="max-width:400px;">
+            <tr><td>ตำแหน่งในคิว:</td><td><strong>#{{ queue_entry.queue_position }}</strong></td></tr>
+            <tr><td>สถานะ:</td><td><span class="status-badge status-{{ queue_entry.status|lower }}">{{ queue_entry.get_status_display }}</span></td></tr>
+            <tr><td>เวลาเข้าคิว:</td><td>{{ queue_entry.created_at|date:"d/m/Y H:i" }}</td></tr>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- Timeline -->
+<div class="card">
+    <div class="card-header"><h4>📊 ประวัติการเปลี่ยนสถานะ</h4></div>
+    <div class="card-body">
+        {% with events=plan.package.rotation_events.all %}
+            {% if events %}
+            <div class="timeline">
+                {% for event in events %}
+                <div class="timeline-item">
+                    <div class="timeline-marker {% if event.event_type == 'DATA_INTEGRITY_REPAIR' %}timeline-marker-repair{% endif %}"></div>
+                    <strong>{{ event.from_state }}</strong> → <strong>{{ event.to_state }}</strong>
+                    <span class="text-muted text-xs ms-2">{{ event.timestamp|date:"d/m/Y H:i" }}</span>
+                    {% if event.actor %}<span class="badge badge-viewer" style="margin-left:8px;">{{ event.actor }}</span>{% endif %}
+                    {% if event.reason %}<br><span class="text-xs text-muted">{{ event.reason }}</span>{% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="empty-state" style="padding:20px;">
+                <p class="text-muted">ยังไม่มีประวัติ</p>
+            </div>
+            {% endif %}
+        {% endwith %}
+    </div>
+</div>
+{% endblock %}

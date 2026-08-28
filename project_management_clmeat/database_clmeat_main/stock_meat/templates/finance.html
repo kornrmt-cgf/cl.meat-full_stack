@@ -1,0 +1,396 @@
+{% extends "base.html" %}
+{% block title %}💰 บัญชี - CL.MEAT{% endblock %}
+{% block extra_css %}
+<style>
+/* ---- Finance page-specific ---- */
+.quick-actions { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+.month-picker { padding: 8px 12px; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 13px; }
+.btn-outline.active { background: var(--accent); color: white; border-color: var(--accent); }
+.chart-wrap { width: 100%; overflow: hidden; position: relative; }
+.calc-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.calc-row input { flex: 1; min-width: 180px; }
+.calc-result { font-size: 28px; font-weight: 800; color: var(--warning); }
+@media (max-width: 768px) { .table-wrapper { overflow-x: auto; } table { min-width: 550px; } }
+</style>
+{% endblock %}
+{% block content %}
+<script src="/static/chart-controls.js"></script>
+
+<!-- === STATS SUMMARY === -->
+<div class="stats-grid">
+    <div class="stat-card"><div class="label">💰 รายรับเดือนนี้</div><div class="value" id="sIncome" style="color:var(--success)">฿0</div></div>
+    <div class="stat-card"><div class="label">💸 รายจ่ายเดือนนี้</div><div class="value" id="sExpense" style="color:var(--danger)">฿0</div></div>
+    <div class="stat-card"><div class="label">📈 กำไรเดือนนี้</div><div class="value" id="sProfit">฿0</div></div>
+    <div class="stat-card"><div class="label">⚡ ค่าไฟเฉลี่ย/วัน</div><div class="value" id="sElecAvg" style="color:var(--info)">฿0</div></div>
+</div>
+
+<!-- === QUICK ACTIONS === -->
+<div class="quick-actions">
+    <input type="month" class="month-picker" id="finMonth" onchange="loadFin()">
+    <button class="btn btn-success" onclick="openAddTx('income')">➕ เพิ่มรายรับ</button>
+    <button class="btn btn-danger" onclick="openAddTx('expense')">➕ เพิ่มรายจ่าย</button>
+</div>
+
+<!-- === FILTER BUTTONS === -->
+<div class="quick-actions" id="filterBtns">
+    <button class="btn btn-outline active" onclick="loadFin('all')" data-filter="all">📋 ทั้งหมด</button>
+    <button class="btn btn-outline" onclick="loadFin('income')" data-filter="income">💰 รายรับ</button>
+    <button class="btn btn-outline" onclick="loadFin('expense')" data-filter="expense">💸 รายจ่าย</button>
+</div>
+
+<!-- === CHART: แนวโน้มรายรับ-รายจ่าย === -->
+<div class="card">
+    <div class="card-title">📈 แนวโน้มรายรับ-รายจ่าย</div>
+    <div class="chart-wrap" id="finChart"></div>
+</div>
+
+<!-- === TRANSACTION LIST === -->
+<div id="txContainer"></div>
+
+<!-- === CHART: ค่าไฟ === -->
+<div class="card">
+    <div class="card-title">⚡ แนวโน้มค่าไฟรายวัน</div>
+    <div class="chart-wrap" id="elecChart"></div>
+</div>
+
+<!-- === QUICK CALC === -->
+<div class="card">
+    <div class="card-title">🧮 คำนวณค่าไฟ (หน่วยละ ฿4.58)</div>
+    <div class="calc-row">
+        <input type="number" id="calcUnits" placeholder="กรอกจำนวนหน่วย (kWh)" oninput="document.getElementById('calcResult').textContent='฿'+((parseFloat(this.value)||0)*4.58).toLocaleString(undefined,{minimumFractionDigits:2})">
+        <div style="font-size:14px;color:var(--text-secondary)">×</div>
+        <div style="font-weight:700;color:var(--info)">฿4.58/หน่วย</div>
+        <div style="font-size:14px;color:var(--text-secondary)">=</div>
+        <div class="calc-result" id="calcResult">฿0.00</div>
+    </div>
+</div>
+
+<!-- === DAILY ELECTRICITY TABLE === -->
+<div class="card">
+    <div class="card-title" style="justify-content:space-between;width:100%">
+        <span>⚡ บันทึกค่าไฟรายวัน</span>
+        <button class="btn btn-success btn-sm" onclick="openAddElec()">➕ เพิ่มวันนี้</button>
+    </div>
+    <div class="table-wrapper">
+        <table>
+            <thead><tr><th>วันที่</th><th>หน่วย</th><th>ค่าไฟ</th><th>มิเตอร์</th><th>จัดการ</th></tr></thead>
+            <tbody id="elecTable"><tr><td colspan="5" class="empty-state">ยังไม่มีรายการ</td></tr></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- === MODAL: เพิ่มรายการ === -->
+<div class="modal-overlay" id="txModal">
+    <div class="modal">
+        <h3 id="txModalTitle">➕ เพิ่มรายการ</h3>
+        <div class="form-group"><label>ประเภท</label><select id="txType" onchange="updTxCat()"><option value="income">💰 รายรับ</option><option value="expense">💸 รายจ่าย</option></select></div>
+        <div class="form-group"><label>จำนวนเงิน (฿)</label><input type="number" id="txAmount" step="0.01" min="0" placeholder="0.00"></div>
+        <div class="form-group"><label>หมวดหมู่</label><select id="txCat"></select></div>
+        <div class="form-group"><label>รายละเอียด</label><input type="text" id="txDesc" placeholder="เช่น ซื้อน้ำดื่ม"></div>
+        <div class="form-group"><label>วันที่</label><input type="date" id="txDate"></div>
+        <div class="form-group"><label>วิธีชำระ</label><select id="txPay"><option value="cash">💵 เงินสด</option><option value="transfer">🏦 โอน</option><option value="promptpay">📱 PromptPay</option><option value="card">💳 บัตร</option></select></div>
+        <div class="actions"><button class="btn btn-outline" onclick="closeModal('txModal')">ยกเลิก</button><button class="btn btn-success" onclick="submitTx()">💾 บันทึก</button></div>
+    </div>
+</div>
+
+<!-- === MODAL: เพิ่มค่าไฟ === -->
+<div class="modal-overlay" id="elecModal">
+    <div class="modal">
+        <h3>⚡ บันทึกค่าไฟรายวัน</h3>
+        <div class="form-group"><label>วันที่</label><input type="date" id="eDate"></div>
+        <div class="form-group"><label>เลขมิเตอร์ปัจจุบัน</label><input type="number" id="eMeter" step="0.01" placeholder="กรอกเลขมิเตอร์วันนี้"></div>
+        <div class="form-group"><label>เลขมิเตอร์ครั้งก่อน</label><input type="number" id="ePrev" step="0.01" readonly></div>
+        <div class="form-group"><label>หน่วยที่ใช้ (kWh)</label><input type="number" id="eUnits" step="0.01" readonly></div>
+        <div style="background:rgba(37,99,235,0.06);border-radius:8px;padding:12px;text-align:center;margin-bottom:16px">
+            <div style="font-size:12px;color:var(--text-secondary)">ค่าไฟวันนี้</div>
+            <div style="font-size:24px;font-weight:700;color:var(--warning)" id="eTotal">฿0.00</div>
+        </div>
+        <div class="form-group"><label>หมายเหตุ</label><textarea id="eNotes" rows="2" placeholder="เช่น เปิดแอร์ทั้งวัน"></textarea></div>
+        <div class="actions"><button class="btn btn-outline" onclick="closeModal('elecModal')">ยกเลิก</button><button class="btn btn-success" onclick="submitElec()">💾 บันทึก</button></div>
+    </div>
+</div>
+
+<div class="toast-container" id="toastContainer"></div>
+
+<script>
+var cats=[], curTxType='all';
+
+document.addEventListener('DOMContentLoaded', function() {
+    var m = document.getElementById('finMonth');
+    var n = new Date();
+    m.value = n.getFullYear() + '-' + String(n.getMonth()+1).padStart(2,'0');
+    document.getElementById('txDate').value = n.toISOString().split('T')[0];
+    document.getElementById('eMeter').addEventListener('input', calcElecMeter);
+    loadCats(); loadFin(); loadSummary(); loadElec(); loadElecChart();
+});
+
+function calcElecMeter() {
+    var m = parseFloat(document.getElementById('eMeter').value);
+    var p = parseFloat(document.getElementById('ePrev').value);
+    if (!isNaN(m) && !isNaN(p)) {
+        var u = Math.max(0, m - p);
+        document.getElementById('eUnits').value = u;
+        document.getElementById('eTotal').textContent = '฿' + (u * 4.58).toLocaleString(undefined, {minimumFractionDigits: 2});
+    }
+}
+
+/* ---- Categories ---- */
+async function loadCats() {
+    try {
+        var r = await fetch('/api/finance/categories/');
+        var d = await r.json();
+        if (d.success) cats = d.categories;
+        updTxCat();
+    } catch(e) {}
+}
+function updTxCat() {
+    var t = document.getElementById('txType').value;
+    var s = document.getElementById('txCat');
+    s.innerHTML = '<option value="">-- เลือกหมวดหมู่ --</option>';
+    cats.filter(function(c){return c.type===t}).forEach(function(c) {
+        var o = document.createElement('option');
+        o.value = c.id; o.textContent = c.icon + ' ' + c.name;
+        s.appendChild(o);
+    });
+}
+
+/* ---- Transactions ---- */
+async function loadFin(type) {
+    if (type !== undefined) {
+        curTxType = type;
+        // Update filter button styles
+        document.querySelectorAll('#filterBtns .btn').forEach(function(b) {
+            b.classList.toggle('active', b.getAttribute('data-filter') === type);
+        });
+    }
+    var m = document.getElementById('finMonth').value;
+    var tp = curTxType !== 'all' ? '&type=' + curTxType : '';
+    try {
+        var r = await fetch('/api/finance/transactions/?month=' + m + tp);
+        var d = await r.json();
+        if (d.success) { renderTx(d.transactions); loadFinChart(); }
+    } catch(e) {}
+}
+
+function renderTx(txs) {
+    var c = document.getElementById('txContainer');
+    if (!txs.length) { c.innerHTML = '<div class="card"><div class="empty-state">📋 ไม่มีรายการในเดือนนี้</div></div>'; return; }
+
+    // Separate: meat sales (Loyverse only) vs other income/expenses
+    // Excel-imported have receipt_number starting with 'EXCEL-' or 'INV-'
+    var income = txs.filter(function(t){return t.type==='income'});
+    var expense = txs.filter(function(t){return t.type==='expense'});
+    var meatSales = income.filter(function(t){
+        if (!t.receipt_number || t.receipt_number.length === 0) return false;
+        var rn = t.receipt_number;
+        // Excel-imported / investment records → NOT meat sales
+        if (rn.indexOf('EXCEL-') === 0 || rn.indexOf('INV-') === 0) return false;
+        return true;
+    });
+    var otherIncome = income.filter(function(t){
+        if (!t.receipt_number || t.receipt_number.length === 0) return true;
+        var rn = t.receipt_number;
+        // Excel-imported / investment records → go to "other"
+        if (rn.indexOf('EXCEL-') === 0 || rn.indexOf('INV-') === 0) return true;
+        return false;
+    });
+    var otherAll = otherIncome.concat(expense);
+
+    function renderRows(items) {
+        if (!items.length) return '<div style="padding:12px;color:var(--text-secondary);font-size:13px">ไม่มีรายการ</div>';
+        var sorted = sortByDate(items).reverse();
+        return '<div class="table-wrapper"><table><thead><tr><th>วันที่</th><th>หมวด</th><th>รายการ</th><th>จำนวนเงิน</th><th>วิธีชำระ</th><th>จัดการ</th></tr></thead><tbody>' +
+            sorted.map(function(tx) {
+                var sg = tx.type === 'income' ? '+' : '-';
+                var color = tx.type === 'income' ? 'var(--success)' : 'var(--danger)';
+                return '<tr><td>' + fmtDate(tx.receipt_date) + '</td><td>' + tx.category_icon + ' ' + (tx.category_name||'-') + '</td><td>' + (tx.description||'-') + '</td><td style="color:' + color + ';font-weight:700">' + sg + '฿' + tx.amount.toLocaleString(undefined,{minimumFractionDigits:2}) + '</td><td>' + tx.payment_method_display + '</td><td><button class="btn btn-danger btn-sm" onclick="delTx(' + tx.id + ')">🗑️</button></td></tr>';
+            }).join('') + '</tbody></table></div>';
+    }
+
+    function fmtDate(s){if(!s)return '-';var d;var m=String(s).match(/(\d{4})-(\d{2})-(\d{2})/);if(m)d=new Date(parseInt(m[1]),parseInt(m[2])-1,parseInt(m[3]));else d=new Date(s);if(isNaN(d.getTime()))return s;var p=function(n){return String(n).padStart(2,'0');};return p(d.getDate())+'/'+p(d.getMonth()+1)+'/'+d.getFullYear();}
+    function sumAmt(arr) {
+        return arr.reduce(function(s,t){
+            var amt = parseFloat(t.amount);
+            return s + (t.type === 'expense' ? -amt : amt);
+        }, 0);
+    }
+    function sortByDate(arr) {
+        return arr.slice().sort(function(a,b){ return (a.receipt_date||'').localeCompare(b.receipt_date||''); });
+    }
+
+    var h = '';
+
+    // 🥩 ขายเนื้อ — only actual meat product sales from Loyverse
+    if (meatSales.length) {
+        var meatTotal = sumAmt(meatSales);
+        h += '<details class="folder" style="margin-bottom:12px"><summary><span style="color:var(--success)">🥩 ขายเนื้อ (จาก Loyverse)</span><span style="background:var(--success);color:#fff;font-size:11px;padding:2px 8px;border-radius:999px">' + meatSales.length + '</span><span style="color:var(--success);font-weight:700;margin-left:auto">+' + meatTotal.toLocaleString(undefined,{minimumFractionDigits:2}) + '</span></summary>' + renderRows(meatSales) + '</details>';
+    }
+
+    // 📋 รายรับ-รายจ่าย อื่นๆ — personal income, expenses, non-meat sales
+    var otherNet = sumAmt(otherAll);
+    var otherColor = otherNet >= 0 ? 'var(--success)' : 'var(--danger)';
+    var otherSign = otherNet >= 0 ? '+' : '';
+    h += '<details class="folder" style="margin-bottom:12px"><summary><span style="color:var(--text-secondary)">📋 รายรับ-รายจ่าย อื่นๆ</span><span style="background:var(--text-secondary);color:#fff;font-size:11px;padding:2px 8px;border-radius:999px">' + otherAll.length + '</span><span style="color:' + otherColor + ';font-weight:700;margin-left:auto">' + otherSign + '฿' + otherNet.toLocaleString(undefined,{minimumFractionDigits:2}) + '</span></summary>' + renderRows(otherAll) + '</details>';
+
+    c.innerHTML = h;
+}
+
+/* ---- Summary ---- */
+async function loadSummary() {
+    try {
+        var r = await fetch('/api/finance/summary/');
+        var d = await r.json();
+        if (d.success) {
+            document.getElementById('sIncome').textContent = '฿' + d.current.income.toLocaleString();
+            document.getElementById('sExpense').textContent = '฿' + d.current.expense.toLocaleString();
+            var p = d.current.profit, pe = document.getElementById('sProfit');
+            pe.textContent = '฿' + p.toLocaleString();
+            pe.style.color = p >= 0 ? 'var(--success)' : 'var(--danger)';
+            loadFinChart();
+        }
+    } catch(e) {}
+}
+
+async function loadFinChart() {
+    try {
+        var m = document.getElementById('finMonth').value;
+        var r = await fetch('/api/finance/transactions/?month=' + m + '&limit=500');
+        var d = await r.json();
+        if (!d.success || !d.transactions.length) return;
+        // Aggregate by date
+        var byDate = {};
+        d.transactions.forEach(function(t) {
+            var dt = t.receipt_date || '';
+            if (!byDate[dt]) byDate[dt] = {_date: dt, income: 0, expense: 0};
+            if (t.type === 'income') byDate[dt].income += parseFloat(t.amount) || 0;
+            else byDate[dt].expense += parseFloat(t.amount) || 0;
+        });
+        var data = Object.values(byDate).sort(function(a,b){ return a._date.localeCompare(b._date); });
+        CLChart._inst['finChart'] = new CLChart('finChart', {
+            data: data,
+            series: [{key:'income',label:'รายรับ',color:'var(--success)'},{key:'expense',label:'รายจ่าย',color:'var(--danger)'}],
+            height: 180
+        });
+    } catch(e) {}
+}
+
+/* ---- Add Transaction ---- */
+function openAddTx(t) {
+    document.getElementById('txType').value = t;
+    updTxCat();
+    document.getElementById('txAmount').value = '';
+    document.getElementById('txDesc').value = '';
+    document.getElementById('txModalTitle').textContent = t === 'income' ? '💰 เพิ่มรายรับ' : '💸 เพิ่มรายจ่าย';
+    openModal('txModal');
+}
+async function submitTx() {
+    var fd = new FormData();
+    fd.append('transaction_type', document.getElementById('txType').value);
+    fd.append('amount', document.getElementById('txAmount').value);
+    fd.append('category_id', document.getElementById('txCat').value);
+    fd.append('description', document.getElementById('txDesc').value);
+    fd.append('receipt_date', document.getElementById('txDate').value);
+    fd.append('payment_method', document.getElementById('txPay').value);
+    try {
+        var r = await fetch('/api/finance/add-transaction/', {method:'POST', body:fd});
+        var d = await r.json();
+        if (d.success) { toast('success', d.message); closeModal('txModal'); loadFin(); loadSummary(); }
+        else toast('error', d.message);
+    } catch(e) { toast('error', 'เกิดข้อผิดพลาด'); }
+}
+async function delTx(id) {
+    if (!confirm('ลบรายการนี้?')) return;
+    var fd = new FormData();
+    fd.append('transaction_id', id);
+    try {
+        var r = await fetch('/api/finance/delete-transaction/', {method:'POST', body:fd});
+        var d = await r.json();
+        if (d.success) { toast('success', d.message); loadFin(); loadSummary(); }
+    } catch(e) {}
+}
+
+/* ---- Electricity ---- */
+function openAddElec() {
+    document.getElementById('eDate').value = new Date().toISOString().split('T')[0];
+    document.getElementById('eMeter').value = '';
+    document.getElementById('eNotes').value = '';
+    document.getElementById('eUnits').value = '';
+    document.getElementById('eTotal').textContent = '฿0.00';
+    openModal('elecModal');
+    fetch('/api/electricity/daily/?days=1').then(function(r){return r.json()}).then(function(d){
+        if (d.success && d.data.length > 0) {
+            document.getElementById('ePrev').value = d.data[0].meter_reading || '';
+        }
+    }).catch(function(){});
+}
+async function submitElec() {
+    var fd = new FormData();
+    fd.append('date', document.getElementById('eDate').value);
+    fd.append('meter_reading', document.getElementById('eMeter').value);
+    fd.append('units_used', document.getElementById('eUnits').value || '0');
+    fd.append('previous_reading', document.getElementById('ePrev').value);
+    fd.append('notes', document.getElementById('eNotes').value);
+    try {
+        var r = await fetch('/api/electricity/daily/add/', {method:'POST', body:fd});
+        var d = await r.json();
+        if (d.success) { toast('success', d.message); closeModal('elecModal'); loadElec(); loadElecChart(); loadSummary(); }
+        else toast('error', d.message);
+    } catch(e) { toast('error', 'เกิดข้อผิดพลาด'); }
+}
+async function loadElec() {
+    try {
+        var r = await fetch('/api/electricity/daily/?days=60');
+        var d = await r.json();
+        if (!d.success) return;
+        var total = d.data.reduce(function(s,r){return s + r.amount}, 0);
+        var avg = total / Math.max(d.data.length, 1);
+        document.getElementById('sElecAvg').textContent = '฿' + avg.toLocaleString(undefined,{minimumFractionDigits:0}) + '/วัน';
+        var tb = document.getElementById('elecTable');
+        if (!d.data.length) { tb.innerHTML = '<tr><td colspan="5" class="empty-state">ยังไม่มีรายการ</td></tr>'; return; }
+        tb.innerHTML = d.data.map(function(r) {
+            return '<tr><td><strong>' + r.date_label + '</strong></td><td>' + r.units + ' หน่วย</td><td style="color:var(--warning);font-weight:700">฿' + r.amount.toLocaleString(undefined,{minimumFractionDigits:2}) + '</td><td>' + r.meter_reading + '</td><td><button class="btn btn-danger btn-sm" onclick="delDailyElec(\'' + r.date + '\')">🗑️</button></td></tr>';
+        }).join('');
+    } catch(e) {}
+}
+async function delDailyElec(date) {
+    if (!confirm('ลบรายการวันที่ ' + date + '?')) return;
+    var fd = new FormData();
+    fd.append('date', date);
+    try {
+        var r = await fetch('/api/electricity/daily/delete/', {method:'POST', body:fd});
+        var d = await r.json();
+        if (d.success) { toast('success', d.message); loadElec(); loadElecChart(); }
+    } catch(e) {}
+}
+async function loadElecChart() {
+    try {
+        var r = await fetch('/api/electricity/daily/?days=60');
+        var d = await r.json();
+        if (!d.success || !d.data.length) return;
+        var data = d.data.map(function(r) {
+            return {_date: r.date, units: r.units, amount: r.amount};
+        });
+        CLChart._inst['elecChart'] = new CLChart('elecChart', {
+            data: data,
+            series: [{key:'amount',label:'ค่าไฟ',color:'var(--warning)'},{key:'units',label:'หน่วย',color:'var(--info)'}],
+            height: 180, scale: 'day'
+        });
+    } catch(e) {}
+}
+
+/* ---- Modals ---- */
+function openModal(id) { document.getElementById(id).classList.add('active'); }
+function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+document.addEventListener('click', function(e) { if (e.target.classList.contains('modal-overlay')) e.target.classList.remove('active'); });
+
+/* ---- Toast ---- */
+function toast(type, msg) {
+    var c = document.getElementById('toastContainer'), t = document.createElement('div');
+    t.className = 'toast ' + type;
+    t.innerHTML = '<span>' + (type === 'success' ? '✅' : '❌') + '</span><span>' + msg + '</span>';
+    c.appendChild(t);
+    setTimeout(function(){t.remove()}, 4000);
+}
+</script>
+</div>
+{% endblock %}
