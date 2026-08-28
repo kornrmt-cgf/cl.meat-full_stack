@@ -145,10 +145,23 @@ def generate_worker_tasks(plan):
 
 @transaction.atomic
 def add_to_thaw_queue(package, rotation_plan, actor=''):
+    """
+    Add a package to the thaw queue.
+
+    Both transitions (FROZEN → READY_FOR_THAW → THAW_QUEUED) must succeed.
+    If either fails, the entire operation rolls back — no partial queue record.
+
+    Raises:
+        ValueError: If preconditions are not met
+        InvalidTransitionError: If state transition is not allowed
+        TransitionValidationError: If transition validation fails (no plan, etc.)
+    """
     from common.state_machine import (
-        transition_package, can_transition, InvalidTransitionError,
+        transition_package, can_transition,
     )
 
+    if rotation_plan is None:
+        raise ValueError("rotation_plan is required")
     if package.current_state != PackageState.FROZEN:
         raise ValueError(f"Must be FROZEN, got {package.current_state}")
     if ThawQueueEntry.objects.filter(
@@ -157,7 +170,8 @@ def add_to_thaw_queue(package, rotation_plan, actor=''):
     ).exists():
         raise ValueError("Already in thaw queue")
 
-    # Transition FROZEN → READY_FOR_THAW (skip if already there)
+    # Transition FROZEN → READY_FOR_THAW
+    # Never skip — if this fails, the entire operation must fail.
     if can_transition(package.current_state, 'READY_FOR_THAW'):
         transition_package(package, 'READY_FOR_THAW', actor=actor)
 
@@ -174,20 +188,102 @@ def add_to_thaw_queue(package, rotation_plan, actor=''):
     )
 
     # Transition READY_FOR_THAW → THAW_QUEUED
+    # If this fails, transaction rolls back — queue entry removed too.
     transition_package(package, 'THAW_QUEUED', actor=actor)
     return entry
+
+
+# ── Cancel queue entry ──
+
+@transaction.atomic
+def remove_from_thaw_queue(entry, actor='', reason=''):
+    """
+    Cancel a thaw queue entry and transition the package back to PACKED.
+
+    All steps happen in one transaction:
+    1. Mark queue entry CANCELLED
+    2. Transition package THAW_QUEUED → PACKED
+    3. Recalculate active queue positions
+
+    If any step fails, the entire operation rolls back.
+
+    Raises:
+        ValueError: If entry cannot be cancelled
+        InvalidTransitionError: If package state transition fails
+    """
+    from common.state_machine import transition_package
+
+    if entry.status not in [QueueStatus.QUEUED, QueueStatus.READY_TO_START]:
+        raise ValueError(
+            f"Cannot cancel queue entry: status is {entry.status}"
+        )
+
+    package = entry.package
+    if package.current_state != PackageState.THAW_QUEUED:
+        raise ValueError(
+            f"Package state is {package.current_state}, expected THAW_QUEUED"
+        )
+
+    # Step 1: Mark queue entry CANCELLED
+    entry.status = QueueStatus.CANCELLED
+    entry.save(update_fields=['status', 'updated_at'])
+
+    # Step 2: Transition package THAW_QUEUED → PACKED
+    transition_package(package, 'PACKED', actor=actor,
+                      reason=reason or 'Cancelled from thaw queue')
+
+    # Step 3: Recalculate active queue positions
+    _recalculate_queue_positions()
+
+    return entry
+
+
+def _recalculate_queue_positions():
+    """
+    Recalculate queue positions for active entries.
+
+    Positions are assigned sequentially by planned_start_at.
+    Cancelled/completed entries are excluded.
+    """
+    active_entries = ThawQueueEntry.objects.filter(
+        status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START]
+    ).order_by('planned_start_at')
+
+    for idx, entry in enumerate(active_entries, start=1):
+        if entry.queue_position != idx:
+            entry.queue_position = idx
+            entry.save(update_fields=['queue_position'])
 
 
 # ── Cancel ──
 
 @transaction.atomic
 def cancel_rotation_plan(plan, actor='', reason=''):
+    """
+    Cancel a rotation plan and its associated queue entries.
+
+    Cancels pending worker tasks and active queue entries.
+    Package state is updated for any queue entries that were active.
+    """
     from operations.models import TaskStatus
+
     plan.status = PlanStatus.CANCELLED
     plan.save(update_fields=['status', 'updated_at'])
+
+    # Cancel pending/in-progress worker tasks
     plan.worker_tasks.filter(
         status__in=[TaskStatus.PENDING, TaskStatus.IN_PROGRESS]
     ).update(status=TaskStatus.CANCELLED)
+
+    # Cancel active queue entries for this plan
+    active_entries = ThawQueueEntry.objects.filter(
+        rotation_plan=plan,
+        status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START]
+    )
+    for entry in active_entries:
+        remove_from_thaw_queue(entry, actor=actor,
+                             reason=reason or 'Plan cancelled')
+
     from planning.audit import Audit
     Audit.plan_action(plan, 'PLAN_CANCELLED', actor=actor, reason=reason)
     return plan
@@ -207,3 +303,82 @@ def get_best_thaw_profile(product=None):
 
 def get_best_freeze_profile():
     return FreezeProfile.objects.filter(active=True).first()
+
+
+# ── Interval overlap detection ──
+
+def check_interval_overlap(start_a, end_a, start_b, end_b):
+    """
+    Check if two time intervals overlap.
+
+    Uses inclusive-exclusive boundaries: [start, end)
+    Two intervals overlap when start_a < end_b AND start_b < end_a.
+
+    Args:
+        start_a: Start of interval A
+        end_a: End of interval A
+        start_b: Start of interval B
+        end_b: End of interval B
+
+    Returns:
+        bool: True if intervals overlap
+    """
+    return start_a < end_b and start_b < end_a
+
+
+def check_thaw_capacity_at_time(profile, target_time, exclude_package=None):
+    """
+    Check thaw capacity at a specific point in time.
+
+    Counts active thaw queue entries that overlap with the target time.
+    An entry overlaps if: entry.planned_start_at <= target_time < entry.target_ready_at
+
+    Args:
+        profile: ThawProfile with thaw_capacity
+        target_time: datetime to check
+        exclude_package: Package to exclude from count
+
+    Returns:
+        dict: {available, current_count, max_capacity}
+    """
+    active_entries = ThawQueueEntry.objects.filter(
+        status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START, QueueStatus.STARTED],
+        planned_start_at__lte=target_time,
+        target_ready_at__gt=target_time,
+    )
+    if exclude_package:
+        active_entries = active_entries.exclude(package=exclude_package)
+
+    current_count = active_entries.count()
+    max_capacity = profile.thaw_capacity
+
+    return {
+        'available': current_count < max_capacity,
+        'current_count': current_count,
+        'max_capacity': max_capacity,
+    }
+
+
+def check_thaw_interval_overlap(new_start, new_end, exclude_package=None):
+    """
+    Check if a new thaw interval overlaps with any active thaw operations.
+
+    Args:
+        new_start: Planned thaw start time
+        new_end: Target ready time
+        exclude_package: Package to exclude from check
+
+    Returns:
+        list: Overlapping entries (empty if no conflict)
+    """
+    active = ThawQueueEntry.objects.filter(
+        status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START, QueueStatus.STARTED],
+    )
+    if exclude_package:
+        active = active.exclude(package=exclude_package)
+
+    overlaps = []
+    for entry in active:
+        if check_interval_overlap(new_start, new_end, entry.planned_start_at, entry.target_ready_at):
+            overlaps.append(entry)
+    return overlaps
