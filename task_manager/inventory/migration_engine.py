@@ -860,3 +860,227 @@ class DryRunEngine:
             },
         }
         Path(path).write_text(json.dumps(output, indent=2, default=str))
+
+
+# ============================================================
+# RESOLUTION CLASSIFICATION
+# ============================================================
+
+class Resolution:
+    AUTO_FIX_SAFE = 'AUTO_FIX_SAFE'
+    MANUAL_REVIEW = 'MANUAL_REVIEW'
+    STRUCTURAL_PROBLEM = 'STRUCTURAL_PROBLEM'
+    MIGRATION_BLOCKER = 'MIGRATION_BLOCKER'
+    ACCEPTED_EXCEPTION = 'ACCEPTED_EXCEPTION'
+
+
+def classify_findings(results):
+    """
+    Classify every finding from the dry-run into a resolution category.
+
+    Returns:
+        dict: {findings: [...], summary: {...}}
+    """
+    classifications = []
+
+    # ── Category findings ──
+    for c in results.get('categories', []):
+        for issue in c.issues:
+            finding = {
+                'entity': 'Category',
+                'legacy_id': c.legacy_id,
+                'severity': issue.severity,
+                'message': issue.message,
+                'field': issue.field,
+            }
+            if 'test' in issue.message.lower():
+                finding['resolution'] = Resolution.ACCEPTED_EXCEPTION
+                finding['rule'] = 'SKIP — test data, do not migrate'
+            elif 'empty' in issue.message.lower():
+                finding['resolution'] = Resolution.MIGRATION_BLOCKER
+                finding['rule'] = 'Cannot create Category without name'
+            elif 'duplicate' in issue.message.lower():
+                finding['resolution'] = Resolution.MANUAL_REVIEW
+                finding['rule'] = 'Duplicate category code — need human decision'
+            else:
+                finding['resolution'] = Resolution.MANUAL_REVIEW
+                finding['rule'] = 'Unknown — needs review'
+            classifications.append(finding)
+
+    # ── Supplier findings ──
+    for c in results.get('suppliers', []):
+        for issue in c.issues:
+            finding = {
+                'entity': 'Supplier',
+                'legacy_id': c.legacy_id,
+                'severity': issue.severity,
+                'message': issue.message,
+                'field': issue.field,
+            }
+            if 'empty' in issue.message.lower():
+                finding['resolution'] = Resolution.MIGRATION_BLOCKER
+                finding['rule'] = 'Cannot create Supplier without name'
+            elif 'duplicate' in issue.message.lower():
+                finding['resolution'] = Resolution.MANUAL_REVIEW
+                finding['rule'] = 'Duplicate supplier name — need human decision'
+            else:
+                finding['resolution'] = Resolution.MANUAL_REVIEW
+                finding['rule'] = 'Unknown — needs review'
+            classifications.append(finding)
+
+    # ── Product findings ──
+    for c in results.get('products', []):
+        for issue in c.issues:
+            finding = {
+                'entity': 'Product',
+                'legacy_id': c.legacy_id,
+                'data_name': c.data.get('name', ''),
+                'severity': issue.severity,
+                'message': issue.message,
+                'field': issue.field,
+            }
+            if 'category reference missing' in issue.message.lower():
+                finding['resolution'] = Resolution.MIGRATION_BLOCKER
+                finding['rule'] = 'Cannot create Product without Category'
+            elif 'category reference invalid' in issue.message.lower():
+                finding['resolution'] = Resolution.MIGRATION_BLOCKER
+                finding['rule'] = 'Category reference points to test data — skip product'
+            elif 'duplicate sku' in issue.message.lower():
+                finding['resolution'] = Resolution.MANUAL_REVIEW
+                finding['rule'] = 'Duplicate SKU — need decision: merge or assign new SKU'
+            elif 'empty' in issue.message.lower():
+                finding['resolution'] = Resolution.MIGRATION_BLOCKER
+                finding['rule'] = 'Cannot create Product without name'
+            else:
+                finding['resolution'] = Resolution.MANUAL_REVIEW
+                finding['rule'] = 'Unknown — needs review'
+            classifications.append(finding)
+
+    # ── Batch findings ──
+    for c in results.get('batches', []):
+        for issue in c.issues:
+            finding = {
+                'entity': 'Batch',
+                'legacy_id': c.legacy_id,
+                'data_batch': c.data.get('batch_number', '?'),
+                'severity': issue.severity,
+                'message': issue.message,
+                'field': issue.field,
+            }
+            if 'product reference' in issue.message.lower():
+                finding['resolution'] = Resolution.MIGRATION_BLOCKER
+                finding['rule'] = 'Batch references invalid product — cannot create'
+            elif 'supplier' in issue.message.lower() and 'warning' in issue.severity.lower():
+                finding['resolution'] = Resolution.AUTO_FIX_SAFE
+                finding['rule'] = 'Missing supplier — create Batch with unknown supplier'
+            elif 'weight' in issue.message.lower() and 'info' in issue.severity.lower():
+                finding['resolution'] = Resolution.ACCEPTED_EXCEPTION
+                finding['rule'] = 'Product_info.weight=0.0 — not used for Package weight'
+            elif 'invalid lot' in issue.message.lower():
+                finding['resolution'] = Resolution.MANUAL_REVIEW
+                finding['rule'] = 'Invalid lot number — needs review'
+            else:
+                finding['resolution'] = Resolution.MANUAL_REVIEW
+                finding['rule'] = 'Unknown — needs review'
+            classifications.append(finding)
+
+    # ── Package findings ──
+    for c in results.get('packages', []):
+        for issue in c.issues:
+            finding = {
+                'entity': 'Package',
+                'legacy_id': c.legacy_id,
+                'data_barcode': c.data.get('barcode', '?'),
+                'severity': issue.severity,
+                'message': issue.message,
+                'field': issue.field,
+            }
+            if 'product reference' in issue.message.lower() and 'orphan' in issue.message.lower():
+                finding['resolution'] = Resolution.MIGRATION_BLOCKER
+                finding['rule'] = 'Package references invalid product_info chain'
+            elif 'product reference' in issue.message.lower():
+                finding['resolution'] = Resolution.MIGRATION_BLOCKER
+                finding['rule'] = 'Package references invalid product'
+            elif 'unknown storage_status' in issue.message.lower():
+                finding['resolution'] = Resolution.MIGRATION_BLOCKER
+                finding['rule'] = 'Unmapped storage_status "pending" — need decision: PACKED or skip?'
+            elif 'empty barcode' in issue.message.lower():
+                finding['resolution'] = Resolution.MIGRATION_BLOCKER
+                finding['rule'] = 'Package must have a barcode'
+            elif 'duplicate barcode' in issue.message.lower():
+                finding['resolution'] = Resolution.MIGRATION_BLOCKER
+                finding['rule'] = 'Duplicate barcode — physical package identity conflict'
+            elif 'invalid weight' in issue.message.lower():
+                finding['resolution'] = Resolution.MIGRATION_BLOCKER
+                finding['rule'] = 'Zero or negative weight — cannot create Package'
+            elif 'inconsistent' in issue.message.lower() or 'conflicting' in issue.message.lower():
+                finding['resolution'] = Resolution.MANUAL_REVIEW
+                finding['rule'] = 'Conflicting state fields — need human decision'
+            elif 'negative selling_price' in issue.message.lower():
+                finding['resolution'] = Resolution.MANUAL_REVIEW
+                finding['rule'] = 'Negative price — need review'
+            elif 'duplicate loyverse' in issue.message.lower():
+                finding['resolution'] = Resolution.MANUAL_REVIEW
+                finding['rule'] = 'Duplicate Loyverse SKU — need review'
+            else:
+                finding['resolution'] = Resolution.MANUAL_REVIEW
+                finding['rule'] = 'Unknown — needs review'
+            classifications.append(finding)
+
+    # ── Summary ──
+    summary = {
+        'total_findings': len(classifications),
+        'auto_fix_safe': sum(1 for f in classifications if f['resolution'] == Resolution.AUTO_FIX_SAFE),
+        'manual_review': sum(1 for f in classifications if f['resolution'] == Resolution.MANUAL_REVIEW),
+        'structural_problem': sum(1 for f in classifications if f['resolution'] == Resolution.STRUCTURAL_PROBLEM),
+        'migration_blocker': sum(1 for f in classifications if f['resolution'] == Resolution.MIGRATION_BLOCKER),
+        'accepted_exception': sum(1 for f in classifications if f['resolution'] == Resolution.ACCEPTED_EXCEPTION),
+    }
+
+    return {'findings': classifications, 'summary': summary}
+
+
+def print_resolution_report(classification):
+    """Print a human-readable resolution report."""
+    s = classification['summary']
+    findings = classification['findings']
+
+    print()
+    print('=' * 60)
+    print('DATA QUALITY RESOLUTION REPORT')
+    print('=' * 60)
+    print(f'  Total findings:         {s["total_findings"]}')
+    print(f'  AUTO_FIX_SAFE:          {s["auto_fix_safe"]}')
+    print(f'  MANUAL_REVIEW:          {s["manual_review"]}')
+    print(f'  STRUCTURAL_PROBLEM:     {s["structural_problem"]}')
+    print(f'  MIGRATION_BLOCKER:      {s["migration_blocker"]}')
+    print(f'  ACCEPTED_EXCEPTION:     {s["accepted_exception"]}')
+    print()
+
+    # Group by resolution
+    by_resolution = {}
+    for f in findings:
+        by_resolution.setdefault(f['resolution'], []).append(f)
+
+    for resolution in [Resolution.MIGRATION_BLOCKER, Resolution.MANUAL_REVIEW,
+                       Resolution.AUTO_FIX_SAFE, Resolution.ACCEPTED_EXCEPTION,
+                       Resolution.STRUCTURAL_PROBLEM]:
+        items = by_resolution.get(resolution, [])
+        if not items:
+            continue
+        print('-' * 60)
+        print(f'  {resolution} ({len(items)})')
+        print('-' * 60)
+        for f in items:
+            entity_id = f.get('legacy_id', '?')
+            name = f.get('data_name') or f.get('data_barcode') or f.get('data_batch') or ''
+            label = f'#{entity_id} {name}'.strip()
+            print(f'    {f["entity"]:12s} {label}')
+            print(f'      Rule: {f["rule"]}')
+            print(f'      Message: {f["message"]}')
+            print()
+
+    print('=' * 60)
+    print('RESOLUTION COMPLETE — NO DATA WAS MODIFIED')
+    print('=' * 60)
+    print()

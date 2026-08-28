@@ -13,7 +13,7 @@ from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
 
-from inventory.migration_engine import DryRunEngine, file_hash
+from inventory.migration_engine import DryRunEngine, file_hash, classify_findings, print_resolution_report
 
 
 class Command(BaseCommand):
@@ -64,6 +64,10 @@ class Command(BaseCommand):
 
         # ── PRINT REPORT ──
         engine.print_report()
+
+        # ── RESOLUTION CLASSIFICATION ──
+        classification = classify_findings(engine.results)
+        print_resolution_report(classification)
 
         # ── VERIFY READ-ONLY (file hash after) ──
         hash_after = file_hash(legacy_path)
