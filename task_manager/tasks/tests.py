@@ -937,9 +937,9 @@ class TimezoneTest(TestCase):
 
     def test_bangkok_time_conversion(self):
         """ทดสอบการแปลงเวลาเป็นกรุงเทพ"""
-        from datetime import datetime
+        from datetime import datetime, timezone as dt_timezone
 
-        utc_time = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        utc_time = datetime(2024, 1, 15, 10, 0, 0, tzinfo=dt_timezone.utc)
         bangkok_tz = timezone.get_current_timezone()
         bangkok_time = utc_time.astimezone(bangkok_tz)
 
