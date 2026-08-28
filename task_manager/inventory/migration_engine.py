@@ -459,8 +459,11 @@ def map_batches(rows, product_candidates, supplier_candidates, batch_id):
 
         # Report weight=0.0
         weight_issue = None
-        if weight == 0.0:
-            weight_issue = 'Product_info.weight = 0.0 (not used for Package weight)'
+        try:
+            if float(weight) == 0.0:
+                weight_issue = 'Product_info.weight = 0.0 (not used for Package weight)'
+        except (TypeError, ValueError):
+            pass
 
         data = {
             'batch_number': batch_number,

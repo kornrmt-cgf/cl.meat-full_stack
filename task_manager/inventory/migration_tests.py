@@ -777,3 +777,67 @@ class TestFileHash(TestCase):
                 'Legacy database was modified during dry-run!')
         finally:
             os.unlink(db_path)
+
+
+class TestBatchWeightZeroRule(TestCase):
+    """
+    Regression test: Product_info.weight=0.0 is ACCEPTED_EXCEPTION.
+
+    Rule: Package physical weight comes from Product_list.weight (grams/1000).
+    Product_info.weight is informational (lot total weight) and is NOT used
+    to construct Package.weight.
+    """
+
+    def test_product_info_weight_not_used_for_package(self):
+        """Package.weight must come from Product_list, not Product_info."""
+        db_path = _create_test_db([
+            ('stock_meat_category', ['ids', 'name_type'], [('1', 'PORK')]),
+            ('stock_meat_supply_meat', ['ids', 'name_place', 'locations'], [('1', 'S1', '')]),
+            ('stock_meat_meat_parts', ['id', 'name', 'prefix_barcode', 'kcalories', 'protent', 'fat', 'category_id'], [
+                ('1', 'Pork', '8001', '185', '31.7', '6.2', '1'),
+            ]),
+            ('stock_meat_product_info', ['id', 'name_id', 'type_product_id', 'import_from_id', 'lot_number', 'weight', 'cost', 'selling_price_per_kg', 'created_at'], [
+                ('1', '1', '1', '1', '1', '0.0', '82.0', '97.0', '2024-01-15'),
+            ]),
+            ('stock_meat_product_list', ['id', 'product_id', 'barcode', 'weight', 'selling_price', 'storage_status', 'thaw_queue_position', 'loyverse_sku', 'loyverse_item_id', 'loyverse_variant_id', 'loyverse_synced', 'mfg'], [
+                ('1', '1', '1-1-8001-0001', '850.0', '82.0', 'frozen', '0', '', '', '', '0', '2024-01-15'),
+            ]),
+        ])
+        try:
+            engine = DryRunEngine(db_path)
+            engine.run()
+            batches = engine.results['batches']
+            self.assertEqual(len(batches), 1)
+            self.assertEqual(batches[0].status, 'VALID')
+            weight_issues = [i for i in batches[0].issues if 'weight' in (i.field or '')]
+            self.assertTrue(any('INFO' in i.severity for i in weight_issues),
+                'Product_info.weight=0.0 should be INFO, not ERROR')
+            packages = engine.results['packages']
+            self.assertEqual(len(packages), 1)
+            self.assertEqual(packages[0].status, 'VALID')
+            self.assertEqual(packages[0].data['weight_kg'], Decimal('0.850'))
+        finally:
+            os.unlink(db_path)
+
+    def test_product_info_weight_zero_does_not_block_batch(self):
+        """Batch with weight=0.0 should be VALID, not SKIPPED."""
+        db_path = _create_test_db([
+            ('stock_meat_category', ['ids', 'name_type'], [('1', 'PORK')]),
+            ('stock_meat_supply_meat', ['ids', 'name_place', 'locations'], [('1', 'S1', '')]),
+            ('stock_meat_meat_parts', ['id', 'name', 'prefix_barcode', 'kcalories', 'protent', 'fat', 'category_id'], [
+                ('1', 'Pork', '8001', '185', '31.7', '6.2', '1'),
+            ]),
+            ('stock_meat_product_info', ['id', 'name_id', 'type_product_id', 'import_from_id', 'lot_number', 'weight', 'cost', 'selling_price_per_kg', 'created_at'], [
+                ('1', '1', '1', '1', '1', '0.0', '82.0', '97.0', '2024-01-15'),
+            ]),
+            ('stock_meat_product_list', ['id', 'product_id', 'barcode', 'weight', 'selling_price', 'storage_status', 'thaw_queue_position', 'loyverse_sku', 'loyverse_item_id', 'loyverse_variant_id', 'loyverse_synced', 'mfg'], []),
+        ])
+        try:
+            engine = DryRunEngine(db_path)
+            engine.run()
+            batches = engine.results['batches']
+            self.assertEqual(len(batches), 1)
+            self.assertEqual(batches[0].status, 'VALID',
+                'Batch with weight=0.0 should be VALID (accepted exception)')
+        finally:
+            os.unlink(db_path)

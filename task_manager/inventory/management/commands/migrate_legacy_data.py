@@ -13,7 +13,8 @@ from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
 
-from inventory.migration_engine import DryRunEngine, file_hash, classify_findings, print_resolution_report
+from inventory.migration_engine import DryRunEngine, file_hash
+from inventory.resolution import classify_findings, print_resolution_report
 
 
 class Command(BaseCommand):
