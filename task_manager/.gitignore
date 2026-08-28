@@ -54,6 +54,3 @@ coverage.xml
 # === Database dumps ===
 *.dump
 *.sql
-
-# === Separate project (contains hardcoded secrets) ===
-database_clmeat_main/

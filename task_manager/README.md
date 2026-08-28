@@ -155,9 +155,11 @@ cl.meat-task_manager/
 
 เข้าสู่ระบบด้วย **userid** (ไม่ใช้ email) + password
 
-ตัวอย่างบัญชีทดสอบ:
-- Manager: `admin` / `admin1234`
-- Employee: `somchai` / `password123`
+สร้างบัญชีทดสอบ:
+```bash
+python manage.py seed_data          # สร้างข้อมูลตัวอย่าง
+python manage.py createsuperuser     # สร้าง admin
+```
 
 ## Tech Stack
 
