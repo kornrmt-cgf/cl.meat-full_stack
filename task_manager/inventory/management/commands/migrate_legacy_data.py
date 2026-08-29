@@ -43,6 +43,10 @@ class Command(BaseCommand):
             '--apply-resolutions', action='store_true', default=False,
             help='Apply approved resolution rules to migration candidates',
         )
+        parser.add_argument(
+            '--simulate', action='store_true', default=False,
+            help='Run full migration simulation with real target DB validation',
+        )
 
     def handle(self, *args, **options):
         # ── SAFETY CHECKS ──
@@ -142,6 +146,16 @@ class Command(BaseCommand):
         if json_path:
             engine.export_json(json_path)
             self.stdout.write(self.style.SUCCESS(f"JSON report saved to: {json_path}"))
+
+        # ── SIMULATION (if requested) ──
+        if options.get('simulate'):
+            from inventory.migration_simulation import MigrationSimulation
+            self.stdout.write(self.style.WARNING("\n" + "=" * 60))
+            self.stdout.write(self.style.WARNING("  RUNNING MIGRATION SIMULATION"))
+            self.stdout.write(self.style.WARNING("=" * 60))
+            sim = MigrationSimulation(str(legacy_path))
+            sim.run()
+            sim.print_report()
 
         # ── FINAL SAFETY CONFIRMATION ──
         self.stdout.write(self.style.WARNING(
