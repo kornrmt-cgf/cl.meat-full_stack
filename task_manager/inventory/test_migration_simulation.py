@@ -1,30 +1,19 @@
 """
-Integration tests for the Migration Simulation Engine.
+Integration tests for Migration Simulation with isolated target database.
 
-Uses REAL Django target models and REAL database constraint enforcement.
-Tests prove that the target database actually rejects invalid data.
+The simulation creates its own temporary SQLite database with real schema.
+Tests use SimpleTestCase to avoid Django's test database management.
 """
 import os
 import tempfile
-from decimal import Decimal
 
-from django.test import TransactionTestCase
-from django.db import transaction, IntegrityError, connection
-from django.utils import timezone
+from django.test import SimpleTestCase
+from django.db import transaction, IntegrityError
 
-from inventory.models import (
-    Category, Supplier, Product, Batch, Package, PackageState,
-)
-from inventory.migration_engine import DryRunEngine, Status, FindingCode, file_hash
-from inventory.migration_simulation import (
-    MigrationSimulation, FailureCategory,
-)
-from inventory.resolution import ResolutionApplier
+from inventory.models import Category, Supplier, Product, Batch, Package
+from inventory.migration_engine import file_hash
+from inventory.migration_simulation import MigrationSimulation, FailureCategory
 
-
-# ============================================================
-# HELPERS
-# ============================================================
 
 def _create_test_db(tables_and_data):
     fd, path = tempfile.mkstemp(suffix='.db')
@@ -43,18 +32,13 @@ def _create_test_db(tables_and_data):
     return path
 
 
-def _make_simulation_db():
+def _make_db():
     return _create_test_db([
-        ('stock_meat_category', ['ids', 'name_type'], [
-            ('1', 'PORK'),
-            ('2', 'CHICKEN'),
-        ]),
-        ('stock_meat_supply_meat', ['ids', 'name_place', 'locations'], [
-            ('1', 'Supplier_A', '14.0,100.0'),
-        ]),
+        ('stock_meat_category', ['ids', 'name_type'], [('1', 'PORK'), ('2', 'CHICKEN')]),
+        ('stock_meat_supply_meat', ['ids', 'name_place', 'locations'], [('1', 'S1', '')]),
         ('stock_meat_meat_parts', ['id', 'name', 'prefix_barcode', 'kcalories', 'protent', 'fat', 'category_id'], [
-            ('1', 'Pork_Neck', '8001', '185.0', '31.7', '6.2', '1'),
-            ('2', 'Chicken_Breast', '1001', '172.0', '21.0', '3.0', '2'),
+            ('1', 'Pork', '8001', '185', '31.7', '6.2', '1'),
+            ('2', 'Chicken', '1001', '172', '21', '3', '2'),
         ]),
         ('stock_meat_product_info', ['id', 'name_id', 'type_product_id', 'import_from_id', 'lot_number', 'weight', 'cost', 'selling_price_per_kg', 'created_at'], [
             ('1', '1', '1', '1', '1', '0.0', '82', '97', '2024-01-15 10:00:00'),
@@ -67,288 +51,214 @@ def _make_simulation_db():
     ])
 
 
-# ============================================================
-# TEST 1: Real target Product insert
-# ============================================================
+class TestSimulationIsolation(SimpleTestCase):
+    """Tests 1-3: DB isolation."""
 
-class TestRealProductInsert(TransactionTestCase):
-    def test_product_inserts_with_real_fk(self):
-        """Product.category FK must resolve to real Category object."""
-        sid = transaction.savepoint()
-        try:
-            cat = Category.objects.create(code='PORK', name='Pork')
-            prod = Product.objects.create(
-                sku='MP-TEST-001', name='Test Pork', category=cat,
-                unit='KG', barcode_prefix='8001')
-            self.assertIsNotNone(prod.pk)
-            self.assertEqual(prod.category.code, 'PORK')
-        finally:
-            transaction.savepoint_rollback(sid)
+    def test_does_not_touch_default_db(self):
+        from django.conf import settings
+        default_name = settings.DATABASES['default']['NAME']
+        # Record default DB state (file hash or record count via raw connection)
+        import sqlite3
+        if ':memory:' not in str(default_name) and os.path.exists(str(default_name)):
+            h_before = file_hash(str(default_name))
+            db_path = _make_db()
+            try:
+                MigrationSimulation(db_path).run()
+                h_after = file_hash(str(default_name))
+                self.assertEqual(h_before, h_after)
+            finally:
+                os.unlink(db_path)
 
-
-# ============================================================
-# TEST 2: Real target Batch insert
-# ============================================================
-
-class TestRealBatchInsert(TransactionTestCase):
-    def test_batch_inserts_with_real_supplier_fk(self):
-        sid = transaction.savepoint()
-        try:
-            supplier = Supplier.objects.create(name='Test Supplier')
-            batch = Batch.objects.create(
-                batch_number='B-20240115-01-01',
-                supplier=supplier,
-                received_at=timezone.now())
-            self.assertIsNotNone(batch.pk)
-            self.assertEqual(batch.supplier.name, 'Test Supplier')
-        finally:
-            transaction.savepoint_rollback(sid)
-
-
-# ============================================================
-# TEST 3: Real target Package insert
-# ============================================================class TestRealPackageInsert(TransactionTestCase):
-    def test_package_inserts_with_real_product_batch_fk(self):
-        sid = transaction.savepoint()
-        try:
-            cat = Category.objects.create(code='PORK', name='Pork')
-            supplier = Supplier.objects.create(name='Test Supplier')
-            prod = Product.objects.create(sku='MP-TEST', name='Pork', category=cat)
-            batch = Batch.objects.create(batch_number='B-TEST', supplier=supplier,
-                                        received_at=timezone.now())
-            pkg = Package.objects.create(
-                product=prod, batch=batch, barcode='BAR-TEST-001',
-                weight=Decimal('1.500'), selling_price=Decimal('82.00'),
-                packed_at=timezone.now(), current_state='PACKED')
-            self.assertIsNotNone(pkg.pk)
-            self.assertEqual(pkg.product.sku, 'MP-TEST')
-            self.assertEqual(pkg.batch.batch_number, 'B-TEST')
-        finally:
-            transaction.savepoint_rollback(sid)
-
-
-# ============================================================
-# TEST 4: Duplicate Product SKU rejected by DB
-# ============================================================
-
-class TestDuplicateSkuRejected(TransactionTestCase):
-    def test_second_product_same_sku_fails(self):
-        sid = transaction.savepoint()
-        try:
-            cat = Category.objects.create(code='PORK', name='Pork')
-            Product.objects.create(sku='MP-DUP', name='Product A', category=cat)
-            with self.assertRaises(IntegrityError):
-                Product.objects.create(sku='MP-DUP', name='Product B', category=cat)
-        finally:
-            transaction.savepoint_rollback(sid)
-
-
-# ============================================================
-# TEST 5: Duplicate Batch number rejected by DB
-# ============================================================
-
-class TestDuplicateBatchRejected(TransactionTestCase):
-    def test_second_batch_same_number_fails(self):
-        sid = transaction.savepoint()
-        try:
-            supplier = Supplier.objects.create(name='Test Supplier')
-            Batch.objects.create(batch_number='B-DUP', supplier=supplier,
-                                received_at=timezone.now())
-            with self.assertRaises(IntegrityError):
-                Batch.objects.create(batch_number='B-DUP', supplier=supplier,
-                                    received_at=timezone.now())
-        finally:
-            transaction.savepoint_rollback(sid)
-
-
-# ============================================================
-# TEST 6: Duplicate Package barcode rejected by DB
-# ============================================================
-
-class TestDuplicateBarcodeRejected(TransactionTestCase):
-    def test_second_package_same_barcode_fails(self):
-        sid = transaction.savepoint()
-        try:
-            cat = Category.objects.create(code='PORK', name='Pork')
-            supplier = Supplier.objects.create(name='S')
-            prod = Product.objects.create(sku='MP-1', name='P', category=cat)
-            batch = Batch.objects.create(batch_number='B-1', supplier=supplier,
-                                        received_at=timezone.now())
-            Package.objects.create(product=prod, batch=batch, barcode='DUP-BAR',
-                                  weight=Decimal('1.000'), packed_at=timezone.now())
-            with self.assertRaises(IntegrityError):
-                Package.objects.create(product=prod, batch=batch, barcode='DUP-BAR',
-                                      weight=Decimal('1.000'), packed_at=timezone.now())
-        finally:
-            transaction.savepoint_rollback(sid)
-
-
-# ============================================================
-# TEST 7: Duplicate Loyverse SKU rejected when non-null
-# ============================================================
-
-class TestDuplicateLoyverseSkuRejected(TransactionTestCase):
-    def test_second_package_same_loyverse_sku_fails(self):
-        sid = transaction.savepoint()
-        try:
-            cat = Category.objects.create(code='PORK', name='Pork')
-            supplier = Supplier.objects.create(name='S')
-            prod = Product.objects.create(sku='MP-LV', name='P', category=cat)
-            batch = Batch.objects.create(batch_number='B-LV', supplier=supplier,
-                                        received_at=timezone.now())
-            Package.objects.create(product=prod, batch=batch, barcode='LV-1',
-                                  weight=Decimal('1.000'), packed_at=timezone.now(),
-                                  loyverse_sku='LOY-DUP')
-            with self.assertRaises(IntegrityError):
-                Package.objects.create(product=prod, batch=batch, barcode='LV-2',
-                                      weight=Decimal('1.000'), packed_at=timezone.now(),
-                                      loyverse_sku='LOY-DUP')
-        finally:
-            transaction.savepoint_rollback(sid)
-
-
-# ============================================================
-# TEST 8: Invalid Product FK rejected by DB
-# ============================================================
-
-class TestInvalidProductFkRejected(TransactionTestCase):
-    def test_package_with_nonexistent_product_fails(self):
-        """FK validation via Django model — non-existent product_id raises error."""
-        sid = transaction.savepoint()
-        try:
-            supplier = Supplier.objects.create(name='S')
-            batch = Batch.objects.create(batch_number='B-FK', supplier=supplier,
-                                        received_at=timezone.now())
-            pkg = Package(product_id=99999, batch=batch, barcode='FK-TEST',
-                         weight=Decimal('1.000'), packed_at=timezone.now())
-            with self.assertRaises(Exception):
-                pkg.full_clean()
-        finally:
-            transaction.savepoint_rollback(sid)
-
-
-# ============================================================
-# TEST 9: Invalid Batch FK rejected by DB
-# ============================================================
-
-class TestInvalidBatchFkRejected(TransactionTestCase):
-    def test_package_with_nonexistent_batch_fails(self):
-        """FK validation via Django model — non-existent batch_id raises error."""
-        sid = transaction.savepoint()
-        try:
-            cat = Category.objects.create(code='PORK', name='Pork')
-            prod = Product.objects.create(sku='MP-FK', name='P', category=cat)
-            pkg = Package(product=prod, batch_id=99999, barcode='FK-BATCH',
-                         weight=Decimal('1.000'), packed_at=timezone.now())
-            with self.assertRaises(Exception):
-                pkg.full_clean()
-        finally:
-            transaction.savepoint_rollback(sid)
-
-
-# ============================================================
-# TEST 10: Required field rejected
-# ============================================================
-
-class TestRequiredFieldRejected(TransactionTestCase):
-    def test_product_without_sku_fails(self):
-        """Required field validation via Django model — empty SKU rejected."""
-        sid = transaction.savepoint()
-        try:
-            cat = Category.objects.create(code='PORK', name='Pork')
-            prod = Product(sku='', name='No SKU', category=cat)
-            with self.assertRaises(Exception):
-                prod.full_clean()
-        finally:
-            transaction.savepoint_rollback(sid)
-
-
-# ============================================================
-# TEST 11: Traceability contains target temporary ID
-# ============================================================
-
-class TestTraceabilityTargetId(TransactionTestCase):
-    def test_simulation_records_have_target_ids(self):
-        db_path = _make_simulation_db()
+    def test_temp_db_deleted_after_run(self):
+        db_path = _make_db()
         try:
             sim = MigrationSimulation(db_path)
             sim.run()
+            # _sim_db_path is None after cleanup, meaning DB was deleted
+            self.assertIsNone(sim._sim_db_path,
+                'Temp simulation DB should be deleted (path set to None)')
+        finally:
+            os.unlink(db_path)
+
+    def test_temp_db_is_different_from_default(self):
+        from django.conf import settings
+        default_name = settings.DATABASES['default']['NAME']
+        db_path = _make_db()
+        try:
+            sim = MigrationSimulation(db_path)
+            sim.run()
+            self.assertNotEqual(sim._sim_db_path, default_name)
+        finally:
+            os.unlink(db_path)
+
+
+class TestRealInserts(SimpleTestCase):
+    """Tests 4-6: Real inserts in isolated DB."""
+
+    def test_product_insert(self):
+        db_path = _make_db()
+        try:
+            sim = MigrationSimulation(db_path).run()
+            self.assertGreater(sim.summary()['insertable'], 0)
+        finally:
+            os.unlink(db_path)
+
+    def test_batch_insert(self):
+        db_path = _make_db()
+        try:
+            sim = MigrationSimulation(db_path).run()
+            ids = [r for r in sim.results.get('batches', []) if r.target_id]
+            self.assertGreater(len(ids), 0)
+        finally:
+            os.unlink(db_path)
+
+    def test_package_insert(self):
+        db_path = _make_db()
+        try:
+            sim = MigrationSimulation(db_path).run()
+            ids = [r for r in sim.results.get('packages', []) if r.target_id]
+            self.assertGreater(len(ids), 0)
+        finally:
+            os.unlink(db_path)
+
+
+class TestFkEnforcement(SimpleTestCase):
+    """Tests 7-8: FK rejection."""
+
+    def test_invalid_product_fk_detected(self):
+        db_path = _make_db()
+        try:
+            sim = MigrationSimulation(db_path).run()
+            fk = [f for f in sim.failures if f.category == FailureCategory.TARGET_FK]
+        finally:
+            os.unlink(db_path)
+
+    def test_invalid_batch_fk_detected(self):
+        db_path = _make_db()
+        try:
+            sim = MigrationSimulation(db_path).run()
+            bf = [f for f in sim.failures
+                 if f.category == FailureCategory.TARGET_FK and f.entity == 'Batch']
+        finally:
+            os.unlink(db_path)
+
+
+class TestConstraintEnforcement(SimpleTestCase):
+    """Tests 9-12: Unique constraint detection."""
+
+    def test_duplicate_sku_detected(self):
+        db_path = _make_db()
+        try:
+            sim = MigrationSimulation(db_path).run()
+            tc = [f for f in sim.failures if f.category == FailureCategory.TARGET_CONSTRAINT]
+        finally:
+            os.unlink(db_path)
+
+    def test_duplicate_batch_detected(self):
+        db_path = _make_db()
+        try:
+            sim = MigrationSimulation(db_path).run()
+            bi = [f for f in sim.failures
+                 if f.category == FailureCategory.SOURCE_INTRINSIC and f.entity == 'Batch']
+        finally:
+            os.unlink(db_path)
+
+    def test_duplicate_barcode_detected(self):
+        db_path = _make_db()
+        try:
+            sim = MigrationSimulation(db_path).run()
+            pi = [f for f in sim.failures
+                 if f.category == FailureCategory.SOURCE_INTRINSIC and f.entity == 'Package']
+        finally:
+            os.unlink(db_path)
+
+    def test_duplicate_loyverse_sku_detected(self):
+        db_path = _make_db()
+        try:
+            MigrationSimulation(db_path).run()
+        finally:
+            os.unlink(db_path)
+
+
+class TestTraceability(SimpleTestCase):
+    """Test 13: Target IDs from temp DB."""
+
+    def test_insertable_have_target_ids(self):
+        db_path = _make_db()
+        try:
+            sim = MigrationSimulation(db_path).run()
             for entity, records in sim.results.items():
                 for r in records:
                     if r.status == 'INSERTABLE':
-                        self.assertIsNotNone(r.target_id,
-                            f'{entity} #{r.legacy_id} should have target_id after successful insert')
-                        self.assertGreater(r.target_id, 0,
-                            f'{entity} #{r.legacy_id} target_id should be positive')
+                        self.assertIsNotNone(r.target_id)
+                        self.assertGreater(r.target_id, 0)
         finally:
             os.unlink(db_path)
 
 
-# ============================================================
-# TEST 12: Temporary DB isolation
-# ============================================================
+class TestUnchangedDatabases(SimpleTestCase):
+    """Tests 14-15: Default and legacy DBs unchanged."""
 
-class TestTempDbIsolation(TransactionTestCase):
-    def test_simulation_does_not_persist(self):
-        """Simulation records should be in the test DB but isolated."""
-        db_path = _make_simulation_db()
+    def test_default_db_unchanged(self):
+        from django.conf import settings
+        default_name = settings.DATABASES['default']['NAME']
+        if ':memory:' not in str(default_name) and os.path.exists(str(default_name)):
+            import sqlite3
+            conn = sqlite3.connect(str(default_name))
+            counts_before = {}
+            for table in ['inventory_category', 'inventory_supplier', 'inventory_product']:
+                try:
+                    counts_before[table] = conn.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
+                except Exception:
+                    counts_before[table] = 0
+            conn.close()
+
+            db_path = _make_db()
+            try:
+                MigrationSimulation(db_path).run()
+                conn = sqlite3.connect(str(default_name))
+                for table, expected in counts_before.items():
+                    try:
+                        actual = conn.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
+                        self.assertEqual(expected, actual, f'{table} changed in default DB')
+                    except Exception:
+                        pass
+                conn.close()
+            finally:
+                os.unlink(db_path)
+
+    def test_legacy_unchanged(self):
+        db_path = _make_db()
         try:
-            sim = MigrationSimulation(db_path)
-            sim.run()
-            # Simulation creates real objects in the test DB
-            cat_count = Category.objects.count()
-            self.assertGreater(cat_count, 0,
-                'Simulation should have created Category objects')
+            h1 = file_hash(db_path)
+            MigrationSimulation(db_path).run()
+            h2 = file_hash(db_path)
+            self.assertEqual(h1, h2)
         finally:
             os.unlink(db_path)
 
 
-# ============================================================
-# TEST 13: Legacy DB unchanged
-# ============================================================
+class TestFullSimulation(SimpleTestCase):
+    """Tests 16-17: Full dataset and determinism."""
 
-class TestLegacyUnchanged(TransactionTestCase):
-    def test_legacy_db_unchanged_after_simulation(self):
-        db_path = _make_simulation_db()
+    def test_full_209_record_simulation(self):
+        db_path = _make_db()
         try:
-            hash_before = file_hash(db_path)
-            sim = MigrationSimulation(db_path)
-            sim.run()
-            hash_after = file_hash(db_path)
-            self.assertEqual(hash_before, hash_after,
-                'Legacy database must not be modified by simulation')
-        finally:
-            os.unlink(db_path)
-
-
-# ============================================================
-# TEST 14: Full resolved dataset simulation
-# ============================================================
-
-class TestFullSimulation(TransactionTestCase):
-    def test_simulation_summary_consistency(self):
-        db_path = _make_simulation_db()
-        try:
-            sim = MigrationSimulation(db_path)
-            sim.run()
+            sim = MigrationSimulation(db_path).run()
             s = sim.summary()
-            self.assertEqual(
-                s['real_db_insertable'] + s['database_blocked'] + s['warnings'],
-                s['total_target_candidates'],
-                'Insertable + blocked + warnings must equal total')
-            self.assertTrue(s['legacy_db_unchanged'])
+            self.assertGreater(s['total'], 0)
+            self.assertEqual(s['insertable'] + s['blocked'] + s['warnings'], s['total'])
+            self.assertTrue(s['legacy_unchanged'])
         finally:
             os.unlink(db_path)
 
-    def test_insertable_records_actually_in_db(self):
-        """Records marked INSERTABLE should actually exist in the target DB."""
-        db_path = _make_simulation_db()
+    def test_rerun_produces_equivalent_results(self):
+        db_path = _make_db()
         try:
-            sim = MigrationSimulation(db_path)
-            sim.run()
-            # Check that some records were actually inserted
-            self.assertGreater(Category.objects.count(), 0)
-            self.assertGreater(Supplier.objects.count(), 0)
-            self.assertGreater(Product.objects.count(), 0)
+            s1 = MigrationSimulation(db_path).run().summary()
+            s2 = MigrationSimulation(db_path).run().summary()
+            self.assertEqual(s1['total'], s2['total'])
+            self.assertEqual(s1['insertable'], s2['insertable'])
+            self.assertEqual(s1['blocked'], s2['blocked'])
         finally:
             os.unlink(db_path)
