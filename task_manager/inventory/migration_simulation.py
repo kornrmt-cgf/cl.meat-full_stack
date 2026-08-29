@@ -1,12 +1,25 @@
 """
 Migration Simulation Engine — Isolated Target Database Validation
 
-Creates a temporary SQLite database with real Django schema.
-All inserts use raw sqlite3 (bypassing Django ORM) for true isolation.
-The temporary database is deleted after simulation.
+Pipeline:
+  legacy.sqlite (READ ONLY)
+  → DryRunEngine
+  → ResolutionApplier
+  → temporary_target.sqlite (created by Django migrations in a subprocess)
+  → schema introspection (verify actual columns)
+  → raw sqlite3 INSERT (simulate records)
+  → collect results
+  → delete temporary database
+
+Uses Django's actual migration files but runs the migrate command in a
+subprocess to avoid Django test framework interference.
 """
+import hashlib
+import io
 import os
 import sqlite3
+import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -17,14 +30,20 @@ from inventory.migration_engine import DryRunEngine, file_hash
 from inventory.resolution import ResolutionApplier
 
 
+# ============================================================
+# FAILURE CATEGORIES (expanded)
+# ============================================================
+
 class FailureCategory:
-    SOURCE_INTRINSIC = 'SOURCE_INTRINSIC_CONFLICT'
-    TARGET_CONSTRAINT = 'TARGET_CONSTRAINT_BLOCKER'
+    MODEL_VALIDATION = 'MODEL_VALIDATION'
+    DATABASE_CONSTRAINT = 'DATABASE_CONSTRAINT'
+    SOURCE_INTRINSIC_BLOCKER = 'SOURCE_INTRINSIC_BLOCKER'
+    UNEXPECTED_ERROR = 'UNEXPECTED_ERROR'
+    WARNING = 'WARNING'
+    HISTORICAL_DATA_LOSS_RISK = 'HISTORICAL_DATA_LOSS_RISK'
     TARGET_FK = 'TARGET_FOREIGN_KEY'
-    TARGET_UNIQUE = 'TARGET_UNIQUE_CONSTRAINT'
     TARGET_REQUIRED = 'TARGET_REQUIRED_FIELD'
     TARGET_TYPE = 'TARGET_FIELD_TYPE'
-    HISTORICAL_LOSS = 'HISTORICAL_DATA_LOSS_RISK'
 
 
 @dataclass
@@ -33,7 +52,10 @@ class SimFailure:
     entity: str
     legacy_id: int
     field: str
+    operation: str
+    error_class: str
     message: str
+    expected: bool = True
 
 
 @dataclass
@@ -42,7 +64,7 @@ class SimRecord:
     legacy_id: int
     source_table: str
     target_data: dict
-    status: str
+    status: str  # INSERTABLE, BLOCKED, WARNING
     failures: list = field(default_factory=list)
     resolution_rule: str = ''
     resolution_status: str = 'NOT_APPLICABLE'
@@ -50,86 +72,67 @@ class SimRecord:
     migration_batch: str = ''
 
 
-# DDL for all target tables — mirrors Django inventory/models.py schema
-_TARGET_SCHEMA = """
-CREATE TABLE IF NOT EXISTS inventory_category (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    code VARCHAR(20) NOT NULL UNIQUE,
-    name VARCHAR(100) NOT NULL,
-    name_thai VARCHAR(100) NOT NULL DEFAULT '',
-    is_active BOOLEAN NOT NULL DEFAULT 1,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE TABLE IF NOT EXISTS inventory_supplier (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name VARCHAR(200) NOT NULL UNIQUE,
-    locations TEXT NOT NULL DEFAULT '',
-    is_active BOOLEAN NOT NULL DEFAULT 1,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE TABLE IF NOT EXISTS inventory_product (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    sku VARCHAR(50) NOT NULL UNIQUE,
-    name VARCHAR(200) NOT NULL,
-    name_thai VARCHAR(200) NOT NULL DEFAULT '',
-    category_id INTEGER NOT NULL REFERENCES inventory_category(id),
-    supplier_id INTEGER NULL REFERENCES inventory_supplier(id),
-    unit VARCHAR(10) NOT NULL DEFAULT 'KG',
-    cost_per_kg DECIMAL(10,2) NOT NULL DEFAULT 0,
-    selling_price_per_kg DECIMAL(10,2) NOT NULL DEFAULT 0,
-    barcode_prefix VARCHAR(20) NOT NULL DEFAULT '',
-    kcalories DECIMAL(8,1) NOT NULL DEFAULT 0,
-    protein DECIMAL(8,1) NOT NULL DEFAULT 0,
-    fat DECIMAL(8,1) NOT NULL DEFAULT 0,
-    active BOOLEAN NOT NULL DEFAULT 1,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE TABLE IF NOT EXISTS inventory_batch (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    batch_number VARCHAR(50) NOT NULL UNIQUE,
-    supplier_id INTEGER NOT NULL REFERENCES inventory_supplier(id),
-    received_at DATETIME NOT NULL,
-    notes TEXT NOT NULL DEFAULT '',
-    active BOOLEAN NOT NULL DEFAULT 1,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE TABLE IF NOT EXISTS inventory_storagelocation (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name VARCHAR(100) NOT NULL,
-    location_type VARCHAR(20) NOT NULL,
-    capacity INTEGER NOT NULL DEFAULT 50,
-    thaw_capacity INTEGER NOT NULL DEFAULT 20,
-    min_temperature DECIMAL(5,2) NULL,
-    max_temperature DECIMAL(5,2) NULL,
-    active BOOLEAN NOT NULL DEFAULT 1,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE TABLE IF NOT EXISTS inventory_package (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    product_id INTEGER NOT NULL REFERENCES inventory_product(id),
-    batch_id INTEGER NOT NULL REFERENCES inventory_batch(id),
-    barcode VARCHAR(100) NOT NULL UNIQUE,
-    weight DECIMAL(6,3) NOT NULL,
-    selling_price DECIMAL(10,2) NOT NULL DEFAULT 0,
-    packed_at DATETIME NOT NULL,
-    current_state VARCHAR(20) NOT NULL DEFAULT 'PACKED',
-    storage_location_id INTEGER NULL REFERENCES inventory_storagelocation(id),
-    loyverse_sku VARCHAR(40) NULL UNIQUE,
-    loyverse_item_id VARCHAR(100) NULL,
-    loyverse_variant_id VARCHAR(100) NULL,
-    loyverse_synced BOOLEAN NOT NULL DEFAULT 0,
-    loyverse_synced_at DATETIME NULL,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-"""
+def _run_django_migrations(target_db_path):
+    """Run Django migrations against target_db_path in an isolated subprocess.
 
+    This completely bypasses the test framework's database monitoring.
+    """
+    manage_py = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        'manage.py',
+    )
+
+    script = f"""
+import os, sys
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings')
+os.environ.setdefault('DJANGO_SECRET_KEY', 'sim-bootstrap-{os.getpid()}')
+
+# Patch DATABASES to add simulation alias pointing at our temp file
+import django
+from django.conf import settings
+
+sim_config = {{
+    'ENGINE': 'django.db.backends.sqlite3',
+    'NAME': r'{target_db_path}',
+}}
+settings.DATABASES['simulation'] = sim_config
+django.setup()
+
+from django.core.management import call_command
+call_command('migrate', database='simulation', verbosity=0)
+print('MIGRATION_OK')
+"""
+    result = subprocess.run(
+        [sys.executable, '-c', script],
+        capture_output=True, text=True,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f'Django migrations failed in subprocess:\n'
+            f'stdout: {result.stdout}\n'
+            f'stderr: {result.stderr}'
+        )
+    if 'MIGRATION_OK' not in result.stdout:
+        raise RuntimeError(
+            f'Django migrations did not complete:\n'
+            f'stdout: {result.stdout}\n'
+            f'stderr: {result.stderr}'
+        )
+
+
+# ============================================================
+# SIMULATION ENGINE
+# ============================================================
 
 class MigrationSimulation:
-    """Simulation using an isolated temporary SQLite database with raw inserts."""
+    """Simulation using Django migrations on an isolated temporary database.
+
+    The temporary database is created in a subprocess so that Django's test
+    framework does not interfere with the migration or INSERT operations.
+    All actual DB operations use raw sqlite3 — the Django ORM is never
+    used for the simulation inserts.
+    """
 
     def __init__(self, legacy_db_path):
         self.legacy_db_path = legacy_db_path
@@ -141,14 +144,15 @@ class MigrationSimulation:
         self.batch_id = None
         self.resolution_trail = None
         self._sim_db_path = None
+        self._schema_columns = {}  # table → [columns]
 
     def run(self):
         self.legacy_hash_before = file_hash(self.legacy_db_path)
 
+        # Dry-run + resolutions
         engine = DryRunEngine(self.legacy_db_path)
         engine.run()
         self.batch_id = engine.results.get('batch_id', 'UNKNOWN')
-
         applier = ResolutionApplier()
         trail = applier.preview(engine.results)
         applier.apply(engine.results, trail)
@@ -156,34 +160,42 @@ class MigrationSimulation:
 
         self.legacy_hash_after = file_hash(self.legacy_db_path)
 
-        # Create isolated temp DB
+        # Create isolated temp DB: Django migrations in subprocess → temp file
         fd, self._sim_db_path = tempfile.mkstemp(suffix='_simulation.db')
         os.close(fd)
 
-        conn = sqlite3.connect(self._sim_db_path)
-        conn.execute('PRAGMA foreign_keys = ON')
-        conn.executescript(_TARGET_SCHEMA)
-        conn.commit()
-
         try:
-            self._build_and_insert(engine.results, conn)
+            _run_django_migrations(self._sim_db_path)
+            self._introspect_schema()
+            self._build_and_insert(engine.results)
             self._check_package_state_conflicts(engine.results)
         finally:
-            conn.close()
-            # Delete temp DB
-            for path in [self._sim_db_path, self._sim_db_path + '-wal',
-                         self._sim_db_path + '-shm', self._sim_db_path + '-journal']:
-                if os.path.exists(path):
-                    try:
-                        os.unlink(path)
-                    except OSError:
-                        pass
-            self._sim_db_path = None
+            self._cleanup()
 
         return self
 
-    def _build_and_insert(self, results, conn):
-        cat_map = {}  # legacy_id → target_id
+    def _introspect_schema(self):
+        """Introspect actual database schema using raw PRAGMA."""
+        conn = sqlite3.connect(self._sim_db_path)
+        cursor = conn.cursor()
+
+        # Get all tables
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'inventory_%'")
+        tables = [row[0] for row in cursor.fetchall()]
+
+        for table in tables:
+            cursor.execute(f"PRAGMA table_info({table})")
+            columns = [(row[1], row[2], bool(row[3])) for row in cursor.fetchall()]
+            self._schema_columns[table] = columns
+
+        conn.close()
+
+    def _build_and_insert(self, results):
+        """Insert all records into the Django-migrated temp database."""
+        conn = sqlite3.connect(self._sim_db_path)
+        conn.execute('PRAGMA foreign_keys = ON')
+
+        cat_map = {}
         sup_map = {}
         prod_map = {}
         batch_map = {}
@@ -205,13 +217,15 @@ class MigrationSimulation:
 
             if not td['code']:
                 record.failures.append(SimFailure(
-                    FailureCategory.TARGET_REQUIRED, 'Category', c.legacy_id, 'code', 'Required'))
+                    FailureCategory.TARGET_REQUIRED, 'Category', c.legacy_id, 'code',
+                    'INSERT', 'ValueError', 'Code is required'))
                 record.status = 'BLOCKED'
             else:
                 try:
+                    now = datetime.now().isoformat()
                     cur = conn.execute(
-                        'INSERT INTO inventory_category (code, name, name_thai, is_active) VALUES (?,?,?,?)',
-                        (td['code'], td['name'], td['name_thai'], int(td['is_active'])))
+                        'INSERT INTO inventory_category (code, name, name_thai, is_active, created_at) VALUES (?,?,?,?,?)',
+                        (td['code'], td['name'], td['name_thai'], int(td['is_active']), now))
                     record.target_id = cur.lastrowid
                     cat_map[c.legacy_id] = record.target_id
                     cat_map[str(c.legacy_id)] = record.target_id
@@ -220,8 +234,8 @@ class MigrationSimulation:
                     conn.rollback()
                     record.status = 'BLOCKED'
                     record.failures.append(SimFailure(
-                        FailureCategory.SOURCE_INTRINSIC, 'Category', c.legacy_id, 'code',
-                        f'DB UNIQUE: {str(e)[:200]}'))
+                        FailureCategory.SOURCE_INTRINSIC_BLOCKER, 'Category', c.legacy_id, 'code',
+                        'INSERT', 'IntegrityError', str(e)[:200], expected=True))
 
             record.resolution_status = self._get_resolution('Category', c.legacy_id)
             cat_records.append(record)
@@ -245,13 +259,15 @@ class MigrationSimulation:
 
             if not td['name']:
                 record.failures.append(SimFailure(
-                    FailureCategory.TARGET_REQUIRED, 'Supplier', c.legacy_id, 'name', 'Required'))
+                    FailureCategory.TARGET_REQUIRED, 'Supplier', c.legacy_id, 'name',
+                    'INSERT', 'ValueError', 'Name is required'))
                 record.status = 'BLOCKED'
             else:
                 try:
+                    now = datetime.now().isoformat()
                     cur = conn.execute(
-                        'INSERT INTO inventory_supplier (name, locations, is_active) VALUES (?,?,?)',
-                        (td['name'], td['locations'], int(td['is_active'])))
+                        'INSERT INTO inventory_supplier (name, locations, is_active, created_at) VALUES (?,?,?,?)',
+                        (td['name'], td['locations'], int(td['is_active']), now))
                     record.target_id = cur.lastrowid
                     sup_map[c.legacy_id] = record.target_id
                     sup_map[str(c.legacy_id)] = record.target_id
@@ -260,8 +276,8 @@ class MigrationSimulation:
                     conn.rollback()
                     record.status = 'BLOCKED'
                     record.failures.append(SimFailure(
-                        FailureCategory.SOURCE_INTRINSIC, 'Supplier', c.legacy_id, 'name',
-                        f'DB UNIQUE: {str(e)[:200]}'))
+                        FailureCategory.SOURCE_INTRINSIC_BLOCKER, 'Supplier', c.legacy_id, 'name',
+                        'INSERT', 'IntegrityError', str(e)[:200], expected=True))
 
             record.resolution_status = self._get_resolution('Supplier', c.legacy_id)
             sup_records.append(record)
@@ -297,30 +313,35 @@ class MigrationSimulation:
 
             if not td['sku']:
                 record.failures.append(SimFailure(
-                    FailureCategory.TARGET_REQUIRED, 'Product', c.legacy_id, 'sku', 'Required'))
+                    FailureCategory.MODEL_VALIDATION, 'Product', c.legacy_id, 'sku',
+                    'INSERT', 'ValueError', 'SKU is required', expected=True))
             if not td['name']:
                 record.failures.append(SimFailure(
-                    FailureCategory.TARGET_REQUIRED, 'Product', c.legacy_id, 'name', 'Required'))
+                    FailureCategory.MODEL_VALIDATION, 'Product', c.legacy_id, 'name',
+                    'INSERT', 'ValueError', 'Name is required', expected=True))
 
-            # Resolve FK
             cat_id = td.get('category_legacy_id')
-            target_cat_id = cat_map.get(cat_id) or cat_map.get(str(cat_id)) if cat_id else None
+            target_cat_id = (cat_map.get(cat_id) or cat_map.get(str(cat_id))) if cat_id else None
             if not target_cat_id:
                 record.failures.append(SimFailure(
                     FailureCategory.TARGET_FK, 'Product', c.legacy_id, 'category',
-                    f'Category not found: code="{td["category_code"]}", legacy_id={cat_id}'))
+                    'INSERT', 'ForeignKeyError',
+                    f'Category not found: code="{td["category_code"]}", legacy_id={cat_id}',
+                    expected=True))
 
             if record.failures:
                 record.status = 'BLOCKED'
             else:
                 try:
+                    now = datetime.now().isoformat()
                     cur = conn.execute(
-                        'INSERT INTO inventory_product (sku, name, name_thai, category_id, unit, '
-                        'cost_per_kg, selling_price_per_kg, barcode_prefix, kcalories, protein, fat, active) '
-                        'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+                        'INSERT INTO inventory_product '
+                        '(sku, name, name_thai, category_id, unit, cost_per_kg, '
+                        'selling_price_per_kg, barcode_prefix, kcalories, protein, fat, active, created_at, updated_at) '
+                        'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                         (td['sku'], td['name'], td['name_thai'], target_cat_id, td['unit'],
                          td['cost_per_kg'], td['selling_price_per_kg'], td['barcode_prefix'],
-                         td['kcalories'], td['protein'], td['fat'], int(td['active'])))
+                         td['kcalories'], td['protein'], td['fat'], int(td['active']), now, now))
                     record.target_id = cur.lastrowid
                     prod_map[c.legacy_id] = record.target_id
                     prod_map[str(c.legacy_id)] = record.target_id
@@ -329,14 +350,14 @@ class MigrationSimulation:
                     conn.rollback()
                     record.status = 'BLOCKED'
                     record.failures.append(SimFailure(
-                        FailureCategory.TARGET_CONSTRAINT, 'Product', c.legacy_id, 'sku',
-                        f'DB UNIQUE: {str(e)[:200]}'))
+                        FailureCategory.DATABASE_CONSTRAINT, 'Product', c.legacy_id, 'sku',
+                        'INSERT', 'IntegrityError', str(e)[:200], expected=True))
                 except sqlite3.OperationalError as e:
                     conn.rollback()
                     record.status = 'BLOCKED'
                     record.failures.append(SimFailure(
-                        FailureCategory.TARGET_TYPE, 'Product', c.legacy_id, 'sku',
-                        f'DB: {str(e)[:200]}'))
+                        FailureCategory.UNEXPECTED_ERROR, 'Product', c.legacy_id, 'sku',
+                        'INSERT', 'OperationalError', str(e)[:200], expected=False))
 
             record.resolution_status = self._get_resolution('Product', c.legacy_id)
             prod_records.append(record)
@@ -365,33 +386,38 @@ class MigrationSimulation:
 
             if not td['batch_number']:
                 record.failures.append(SimFailure(
-                    FailureCategory.TARGET_REQUIRED, 'Batch', c.legacy_id, 'batch_number', 'Required'))
+                    FailureCategory.MODEL_VALIDATION, 'Batch', c.legacy_id, 'batch_number',
+                    'INSERT', 'ValueError', 'Required'))
 
             sup_id = td.get('supplier_legacy_id')
-            target_sup_id = sup_map.get(sup_id) or sup_map.get(str(sup_id)) if sup_id else None
+            target_sup_id = (sup_map.get(sup_id) or sup_map.get(str(sup_id))) if sup_id else None
             if not target_sup_id:
                 record.failures.append(SimFailure(
                     FailureCategory.TARGET_FK, 'Batch', c.legacy_id, 'supplier',
+                    'INSERT', 'ForeignKeyError',
                     f'Supplier not found: "{td["supplier_name"]}"'))
 
             received_at = None
             if td['received_at']:
                 try:
                     received_at = datetime.fromisoformat(td['received_at'].replace(' ', 'T')).isoformat()
-                except (ValueError, TypeError):
+                except (ValueError, TypeError) as e:
                     record.failures.append(SimFailure(
-                        FailureCategory.TARGET_TYPE, 'Batch', c.legacy_id, 'received_at', 'Invalid datetime'))
+                        FailureCategory.MODEL_VALIDATION, 'Batch', c.legacy_id, 'received_at',
+                        'INSERT', type(e).__name__, f'Invalid datetime: "{td["received_at"]}"'))
             if not received_at:
                 record.failures.append(SimFailure(
-                    FailureCategory.TARGET_REQUIRED, 'Batch', c.legacy_id, 'received_at', 'Required'))
+                    FailureCategory.MODEL_VALIDATION, 'Batch', c.legacy_id, 'received_at',
+                    'INSERT', 'ValueError', 'Required'))
 
             if record.failures:
                 record.status = 'BLOCKED'
             else:
                 try:
+                    now = datetime.now().isoformat()
                     cur = conn.execute(
-                        'INSERT INTO inventory_batch (batch_number, supplier_id, received_at) VALUES (?,?,?)',
-                        (td['batch_number'], target_sup_id, received_at))
+                        'INSERT INTO inventory_batch (batch_number, supplier_id, received_at, notes, active, created_at, updated_at) VALUES (?,?,?,?,?,?,?)',
+                        (td['batch_number'], target_sup_id, received_at, '', 1, now, now))
                     record.target_id = cur.lastrowid
                     batch_map[c.legacy_id] = record.target_id
                     batch_map[str(c.legacy_id)] = record.target_id
@@ -400,8 +426,8 @@ class MigrationSimulation:
                     conn.rollback()
                     record.status = 'BLOCKED'
                     record.failures.append(SimFailure(
-                        FailureCategory.SOURCE_INTRINSIC, 'Batch', c.legacy_id, 'batch_number',
-                        f'DB UNIQUE: {str(e)[:200]}'))
+                        FailureCategory.SOURCE_INTRINSIC_BLOCKER, 'Batch', c.legacy_id, 'batch_number',
+                        'INSERT', 'IntegrityError', str(e)[:200], expected=True))
 
             record.resolution_status = self._get_resolution('Batch', c.legacy_id)
             batch_records.append(record)
@@ -447,6 +473,7 @@ class MigrationSimulation:
             if not target_prod_id:
                 record.failures.append(SimFailure(
                     FailureCategory.TARGET_FK, 'Package', c.legacy_id, 'product',
+                    'INSERT', 'ForeignKeyError',
                     f'Product not found: sku="{td["product_sku"]}"'))
 
             # Resolve batch FK
@@ -456,6 +483,7 @@ class MigrationSimulation:
             if not target_batch_id:
                 record.failures.append(SimFailure(
                     FailureCategory.TARGET_FK, 'Package', c.legacy_id, 'batch',
+                    'INSERT', 'ForeignKeyError',
                     f'Batch not found: "{td["batch_number"]}"'))
 
             # Parse datetime
@@ -463,20 +491,23 @@ class MigrationSimulation:
             if td['packed_at']:
                 try:
                     packed_at = datetime.fromisoformat(td['packed_at'].replace(' ', 'T')).isoformat()
-                except (ValueError, TypeError):
+                except (ValueError, TypeError) as e:
                     record.failures.append(SimFailure(
-                        FailureCategory.TARGET_TYPE, 'Package', c.legacy_id, 'packed_at', 'Invalid'))
+                        FailureCategory.MODEL_VALIDATION, 'Package', c.legacy_id, 'packed_at',
+                        'INSERT', type(e).__name__, 'Invalid datetime'))
             if not packed_at:
                 record.failures.append(SimFailure(
-                    FailureCategory.TARGET_REQUIRED, 'Package', c.legacy_id, 'packed_at', 'Required'))
+                    FailureCategory.MODEL_VALIDATION, 'Package', c.legacy_id, 'packed_at',
+                    'INSERT', 'ValueError', 'Required'))
 
             # Validate weight
             weight_kg = None
             try:
                 weight_kg = Decimal(td['weight_kg'])
-            except (InvalidOperation, ValueError):
+            except (InvalidOperation, ValueError) as e:
                 record.failures.append(SimFailure(
-                    FailureCategory.TARGET_TYPE, 'Package', c.legacy_id, 'weight', f'Invalid: "{td["weight_kg"]}"'))
+                    FailureCategory.MODEL_VALIDATION, 'Package', c.legacy_id, 'weight',
+                    'INSERT', type(e).__name__, f'Invalid: "{td["weight_kg"]}"'))
 
             if record.failures:
                 record.status = 'BLOCKED'
@@ -488,16 +519,17 @@ class MigrationSimulation:
                     loyverse_sku = None
 
                 try:
+                    now = datetime.now().isoformat()
                     cur = conn.execute(
                         'INSERT INTO inventory_package '
                         '(product_id, batch_id, barcode, weight, selling_price, packed_at, '
-                        'current_state, loyverse_sku, loyverse_item_id, loyverse_variant_id, loyverse_synced) '
-                        'VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                        'current_state, loyverse_sku, loyverse_item_id, loyverse_variant_id, loyverse_synced, created_at, updated_at) '
+                        'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
                         (target_prod_id, target_batch_id, td['barcode'],
                          str(weight_kg), td['selling_price'], packed_at,
                          td['canonical_state'], loyverse_sku,
                          td['loyverse_item_id'] or None, td['loyverse_variant_id'] or None,
-                         int(td['loyverse_synced'])))
+                         int(td['loyverse_synced']), now, now))
                     record.target_id = cur.lastrowid
                     conn.commit()
                 except sqlite3.IntegrityError as e:
@@ -506,8 +538,14 @@ class MigrationSimulation:
                     err = str(e).lower()
                     fld = 'barcode' if 'barcode' in err else ('loyverse_sku' if 'loyverse' in err else 'unique')
                     record.failures.append(SimFailure(
-                        FailureCategory.SOURCE_INTRINSIC, 'Package', c.legacy_id, fld,
-                        f'DB: {str(e)[:200]}'))
+                        FailureCategory.DATABASE_CONSTRAINT, 'Package', c.legacy_id, fld,
+                        'INSERT', 'IntegrityError', str(e)[:200], expected=True))
+                except sqlite3.OperationalError as e:
+                    conn.rollback()
+                    record.status = 'BLOCKED'
+                    record.failures.append(SimFailure(
+                        FailureCategory.UNEXPECTED_ERROR, 'Package', c.legacy_id, 'weight',
+                        'INSERT', 'OperationalError', str(e)[:200], expected=False))
 
             record.resolution_status = self._get_resolution('Package', c.legacy_id)
             pkg_records.append(record)
@@ -519,6 +557,8 @@ class MigrationSimulation:
                 'resolution_status': record.resolution_status})
         self.results['packages'] = pkg_records
 
+        conn.close()
+
     def _check_package_state_conflicts(self, results):
         for c in results.get('packages', []):
             lid = int(c.legacy_id) if c.legacy_id else 0
@@ -526,9 +566,10 @@ class MigrationSimulation:
                 status_note = c.data.get('state_note', '')
                 thaw_q = c.data.get('thaw_queue_position', 0)
                 if 'depleted' in str(status_note).lower() and thaw_q > 0:
-                    f = SimFailure(FailureCategory.HISTORICAL_LOSS, 'Package', c.legacy_id,
-                                  'current_state',
-                                  f'Depleted + thaw_queue={thaw_q} — no thaw history in target schema')
+                    f = SimFailure(FailureCategory.HISTORICAL_DATA_LOSS_RISK, 'Package', c.legacy_id,
+                                  'current_state', 'VALIDATE', 'DataLossRisk',
+                                  f'Depleted + thaw_queue={thaw_q} — no thaw history in target schema',
+                                  expected=True)
                     self.failures.append(f)
                     for rec in self.results.get('packages', []):
                         if int(rec.legacy_id) == lid:
@@ -544,6 +585,17 @@ class MigrationSimulation:
             if e.entity == entity and int(e.legacy_id) == int(legacy_id):
                 return 'APPLIED' if e.applied else 'PENDING_APPROVAL'
         return 'NOT_APPLICABLE'
+
+    def _cleanup(self):
+        """Remove temp DB file."""
+        for path in [self._sim_db_path, self._sim_db_path + '-wal',
+                     self._sim_db_path + '-shm', self._sim_db_path + '-journal']:
+            if path and os.path.exists(path):
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+        self._sim_db_path = None
 
     def summary(self):
         total = sum(len(v) for v in self.results.values())
@@ -563,23 +615,28 @@ class MigrationSimulation:
         s = self.summary()
         print()
         print('=' * 60)
-        print('MIGRATION SIMULATION (ISOLATED TARGET DB)')
+        print('MIGRATION SIMULATION (DJANGO MIGRATIONS + ISOLATED DB)')
         print('=' * 60)
-        print(f'  Batch:       {self.batch_id}')
-        print(f'  Source:      {self.legacy_db_path}')
-        print(f'  Temp DB:     (created, tested, deleted)')
+        print(f'  Batch:          {self.batch_id}')
+        print(f'  Source:         {self.legacy_db_path}')
+        print(f'  Schema:         Django migrations → temp SQLite (subprocess)')
+        print()
+        print('SCHEMA INTROSPECTION:')
+        for table, cols in self._schema_columns.items():
+            print(f'  {table}: {len(cols)} columns')
         print()
         print('RESULTS:')
         print(f'  {"Total candidates":30s} {s["total"]}')
-        print(f'  {"Temp DB inserts":30s} {s["insertable"]}')
-        print(f'  {"Source-intrinsic blockers":30s} {s["blocked"]}')
+        print(f'  {"Temp DB inserts (actual)":30s} {s["insertable"]}')
+        print(f'  {"Blocked":30s} {s["blocked"]}')
         print(f'  {"Warnings":30s} {s["warnings"]}')
         print()
         if s['failures_by_category']:
-            print('CONSTRAINT RESULTS:')
+            print('ERROR CLASSIFICATION:')
             for cat, cnt in sorted(s['failures_by_category'].items()):
                 print(f'  {cat:40s} {cnt}')
             print()
+
         if s['blocked'] > 0:
             print('-' * 60)
             print('  BLOCKED RECORDS')
@@ -589,8 +646,10 @@ class MigrationSimulation:
                     if r.status == 'BLOCKED':
                         print(f'  ❌ {r.entity} #{r.legacy_id}')
                         for f in r.failures:
-                            print(f'     [{f.category}] {f.field}: {f.message}')
+                            exp = ' (expected)' if f.expected else ' (UNEXPECTED)'
+                            print(f'     [{f.category}] {f.field}: {f.message}{exp}')
                         print()
+
         print('-' * 60)
         print(f'  TRACEABILITY ({len(self.traceability)} records)')
         print('-' * 60)
