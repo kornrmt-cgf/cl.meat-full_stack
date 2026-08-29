@@ -36,6 +36,43 @@ class Status:
 
 
 # ============================================================
+# FINDING CODES (stable, message-independent)
+# ============================================================
+
+class FindingCode:
+    # Category
+    CATEGORY_EMPTY = 'CATEGORY_EMPTY'
+    CATEGORY_TEST_DATA = 'CATEGORY_TEST_DATA'
+    CATEGORY_DUPLICATE = 'CATEGORY_DUPLICATE'
+
+    # Supplier
+    SUPPLIER_EMPTY = 'SUPPLIER_EMPTY'
+    SUPPLIER_DUPLICATE = 'SUPPLIER_DUPLICATE'
+
+    # Product
+    PRODUCT_CATEGORY_MISSING = 'PRODUCT_CATEGORY_MISSING'
+    PRODUCT_CATEGORY_INVALID = 'PRODUCT_CATEGORY_INVALID'
+    PRODUCT_DUPLICATE_SKU = 'PRODUCT_DUPLICATE_SKU'
+    PRODUCT_NAME_EMPTY = 'PRODUCT_NAME_EMPTY'
+
+    # Batch
+    BATCH_INVALID_PRODUCT = 'BATCH_INVALID_PRODUCT'
+    BATCH_WEIGHT_ZERO = 'BATCH_WEIGHT_ZERO'
+    BATCH_MISSING_SUPPLIER = 'BATCH_MISSING_SUPPLIER'
+    BATCH_INVALID_LOT = 'BATCH_INVALID_LOT'
+
+    # Package
+    PACKAGE_ORPHAN_PRODUCT = 'PACKAGE_ORPHAN_PRODUCT'
+    PACKAGE_UNKNOWN_STORAGE_STATUS = 'PACKAGE_UNKNOWN_STORAGE_STATUS'
+    PACKAGE_STATE_CONFLICT = 'PACKAGE_STATE_CONFLICT'
+    PACKAGE_DUPLICATE_BARCODE = 'PACKAGE_DUPLICATE_BARCODE'
+    PACKAGE_EMPTY_BARCODE = 'PACKAGE_EMPTY_BARCODE'
+    PACKAGE_INVALID_WEIGHT = 'PACKAGE_INVALID_WEIGHT'
+    PACKAGE_NEGATIVE_PRICE = 'PACKAGE_NEGATIVE_PRICE'
+    PACKAGE_DUPLICATE_LOYVERSE_SKU = 'PACKAGE_DUPLICATE_LOYVERSE_SKU'
+
+
+# ============================================================
 # MIGRATION BATCH
 # ============================================================
 
@@ -122,12 +159,13 @@ class LegacyDB:
 # ============================================================
 
 class Issue:
-    def __init__(self, severity, source, legacy_id, message, field=None):
+    def __init__(self, severity, source, legacy_id, message, field=None, code=None):
         self.severity = severity
         self.source = source
         self.legacy_id = legacy_id
         self.message = message
         self.field = field
+        self.code = code  # stable FindingCode — never depends on message wording
 
     def to_dict(self):
         d = {
@@ -138,6 +176,8 @@ class Issue:
         }
         if self.field:
             d['field'] = self.field
+        if self.code:
+            d['code'] = self.code
         return d
 
 
@@ -154,14 +194,16 @@ class Candidate:
         self.status = status
         self.issues = []
 
-    def add_issue(self, severity, message, field=None):
-        self.issues.append(Issue(severity, self.legacy_source, self.legacy_id, message, field))
+    def add_issue(self, severity, message, field=None, code=None):
+        issue = Issue(severity, self.legacy_source, self.legacy_id, message, field, code)
+        self.issues.append(issue)
         # Escalation: ERROR → INVALID (unless already SKIPPED)
         if severity == Severity.ERROR and self.status not in (Status.INVALID, Status.SKIPPED):
             self.status = Status.INVALID
         # Escalation: WARNING → WARNING (only from VALID)
         elif severity == Severity.WARNING and self.status == Status.VALID:
             self.status = Status.WARNING
+        return issue
 
     def to_dict(self):
         return {
@@ -239,20 +281,23 @@ def map_categories(rows, batch_id):
 
         if not name:
             c = Candidate('Category', 'stock_meat_category', legacy_id, {'name': ''}, Status.SKIPPED)
-            c.add_issue(Severity.ERROR, 'Category name is empty', 'name_type')
+            c.add_issue(Severity.ERROR, 'Category name is empty', 'name_type',
+                       code=FindingCode.CATEGORY_EMPTY)
             candidates.append(c)
             continue
 
         if name.lower() in ('test', 'test ', ''):
             c = Candidate('Category', 'stock_meat_category', legacy_id, {'name': name}, Status.WARNING)
-            c.add_issue(Severity.WARNING, f'Category name "{name}" appears to be test data', 'name_type')
+            c.add_issue(Severity.WARNING, f'Category name "{name}" appears to be test data', 'name_type',
+                       code=FindingCode.CATEGORY_TEST_DATA)
             candidates.append(c)
             continue
 
         code = name[:20].upper().replace(' ', '_')
         if code in seen_codes:
             c = Candidate('Category', 'stock_meat_category', legacy_id, {'name': name, 'code': code}, Status.WARNING)
-            c.add_issue(Severity.WARNING, f'Duplicate category code "{code}" (same as legacy #{seen_codes[code]})', 'code')
+            c.add_issue(Severity.WARNING, f'Duplicate category code "{code}" (same as legacy #{seen_codes[code]})', 'code',
+                       code=FindingCode.CATEGORY_DUPLICATE)
             candidates.append(c)
             continue
 
@@ -283,13 +328,15 @@ def map_suppliers(rows, batch_id):
 
         if not name:
             c = Candidate('Supplier', 'stock_meat_supply_meat', legacy_id, {'name': ''}, Status.SKIPPED)
-            c.add_issue(Severity.ERROR, 'Supplier name is empty', 'name_place')
+            c.add_issue(Severity.ERROR, 'Supplier name is empty', 'name_place',
+                       code=FindingCode.SUPPLIER_EMPTY)
             candidates.append(c)
             continue
 
         if name in seen_names:
             c = Candidate('Supplier', 'stock_meat_supply_meat', legacy_id, {'name': name}, Status.WARNING)
-            c.add_issue(Severity.WARNING, f'Duplicate supplier name (same as legacy #{seen_names[name]})', 'name')
+            c.add_issue(Severity.WARNING, f'Duplicate supplier name (same as legacy #{seen_names[name]})', 'name',
+                       code=FindingCode.SUPPLIER_DUPLICATE)
             candidates.append(c)
             continue
 
@@ -350,14 +397,20 @@ def map_products(rows, category_candidates, batch_id):
 
         if not name:
             c = Candidate('Product', 'stock_meat_meat_parts', legacy_id, {'name': ''}, Status.SKIPPED)
-            c.add_issue(Severity.ERROR, 'Product name is empty', 'name')
+            c.add_issue(Severity.ERROR, 'Product name is empty', 'name',
+                       code=FindingCode.PRODUCT_NAME_EMPTY)
             candidates.append(c)
             continue
 
         if category_id is None or category_id not in category_map:
             c = Candidate('Product', 'stock_meat_meat_parts', legacy_id, {'name': name}, Status.SKIPPED)
             cat_status = 'missing' if category_id is None else f'invalid (id={category_id})'
-            c.add_issue(Severity.ERROR, f'Category reference {cat_status}', 'category_id')
+            # Determine correct finding code
+            if category_id is None:
+                code = FindingCode.PRODUCT_CATEGORY_MISSING
+            else:
+                code = FindingCode.PRODUCT_CATEGORY_INVALID
+            c.add_issue(Severity.ERROR, f'Category reference {cat_status}', 'category_id', code=code)
             candidates.append(c)
             continue
 
@@ -383,16 +436,15 @@ def map_products(rows, category_candidates, batch_id):
         c = Candidate('Product', 'stock_meat_meat_parts', legacy_id, data, status)
 
         if sku in duplicate_skus:
-            # Find the first ID for this SKU (deterministic ordering)
             first_id = min(sku_to_legacy_ids[sku])
             if legacy_id == first_id:
                 c.add_issue(Severity.WARNING,
                            f'Duplicate SKU "{sku}" shared by meat_parts IDs {sorted(sku_to_legacy_ids[sku])}',
-                           'sku')
+                           'sku', code=FindingCode.PRODUCT_DUPLICATE_SKU)
             else:
                 c.add_issue(Severity.WARNING,
                            f'Duplicate SKU "{sku}" (first occurrence is legacy #{first_id})',
-                           'sku')
+                           'sku', code=FindingCode.PRODUCT_DUPLICATE_SKU)
 
         candidates.append(c)
 
@@ -430,9 +482,11 @@ def map_batches(rows, product_candidates, supplier_candidates, batch_id):
 
         # Resolve product via meat_parts_id
         if meat_parts_id is None or meat_parts_id not in product_map:
-            c = Candidate('Batch', 'stock_meat_product_info', legacy_id, {}, Status.SKIPPED)
+            ref_data = {'product_legacy_id': meat_parts_id}
+            c = Candidate('Batch', 'stock_meat_product_info', legacy_id, ref_data, Status.SKIPPED)
             ref = 'missing' if meat_parts_id is None else f'invalid (id={meat_parts_id})'
-            c.add_issue(Severity.ERROR, f'Product reference {ref}', 'name_id')
+            c.add_issue(Severity.ERROR, f'Product reference {ref}', 'name_id',
+                       code=FindingCode.BATCH_INVALID_PRODUCT)
             candidates.append(c)
             continue
 
@@ -480,15 +534,19 @@ def map_batches(rows, product_candidates, supplier_candidates, batch_id):
         c = Candidate('Batch', 'stock_meat_product_info', legacy_id, data)
 
         if not supplier_id:
-            c.add_issue(Severity.WARNING, 'No supplier reference', 'import_from_id')
+            c.add_issue(Severity.WARNING, 'No supplier reference', 'import_from_id',
+                       code=FindingCode.BATCH_MISSING_SUPPLIER)
         elif supplier_id not in supplier_map:
-            c.add_issue(Severity.WARNING, f'Supplier reference invalid (id={supplier_id})', 'import_from_id')
+            c.add_issue(Severity.WARNING, f'Supplier reference invalid (id={supplier_id})', 'import_from_id',
+                       code=FindingCode.BATCH_MISSING_SUPPLIER)
 
         if weight_issue:
-            c.add_issue(Severity.INFO, weight_issue, 'weight')
+            c.add_issue(Severity.INFO, weight_issue, 'weight',
+                       code=FindingCode.BATCH_WEIGHT_ZERO)
 
         if lot_int <= 0:
-            c.add_issue(Severity.WARNING, f'Invalid lot_number: {lot_number}', 'lot_number')
+            c.add_issue(Severity.WARNING, f'Invalid lot_number: {lot_number}', 'lot_number',
+                       code=FindingCode.BATCH_INVALID_LOT)
 
         candidates.append(c)
         seen_batch_numbers[batch_number] = legacy_id
@@ -549,7 +607,6 @@ def map_packages(rows, product_candidates, batch_candidates, pi_to_mp_map, batch
     batch_by_pi_id = {}
     for bc in batch_candidates:
         if bc.status != Status.INVALID:
-            # Batch's legacy_id is the product_info.id
             batch_by_pi_id[bc.legacy_id] = bc
             batch_by_pi_id[str(bc.legacy_id)] = bc
 
@@ -576,18 +633,19 @@ def map_packages(rows, product_candidates, batch_candidates, pi_to_mp_map, batch
         # Validate barcode
         if not barcode:
             c = Candidate('Package', 'stock_meat_product_list', legacy_id, {}, Status.SKIPPED)
-            c.add_issue(Severity.ERROR, 'Empty barcode', 'barcode')
+            c.add_issue(Severity.ERROR, 'Empty barcode', 'barcode',
+                       code=FindingCode.PACKAGE_EMPTY_BARCODE)
             candidates.append(c)
             continue
 
         if barcode in seen_barcodes:
             c = Candidate('Package', 'stock_meat_product_list', legacy_id, {'barcode': barcode}, Status.SKIPPED)
-            c.add_issue(Severity.ERROR, f'Duplicate barcode (first at legacy #{seen_barcodes[barcode]})', 'barcode')
+            c.add_issue(Severity.ERROR, f'Duplicate barcode (first at legacy #{seen_barcodes[barcode]})', 'barcode',
+                       code=FindingCode.PACKAGE_DUPLICATE_BARCODE)
             candidates.append(c)
             continue
 
         # ── PRODUCT RESOLUTION (FIXED) ──
-        # product_list.product_id → product_info.id → product_info.name_id → meat_parts.id → product candidate
         meat_parts_id = None
         if product_info_id is not None:
             meat_parts_id = pi_to_mp_map.get(product_info_id) or pi_to_mp_map.get(str(product_info_id))
@@ -597,22 +655,29 @@ def map_packages(rows, product_candidates, batch_candidates, pi_to_mp_map, batch
             product_candidate = mp_product_map.get(meat_parts_id) or mp_product_map.get(str(meat_parts_id))
 
         if not product_candidate:
-            c = Candidate('Package', 'stock_meat_product_list', legacy_id, {'barcode': barcode}, Status.SKIPPED)
+            c = Candidate('Package', 'stock_meat_product_list', legacy_id,
+                        {'barcode': barcode, 'product_legacy_id': product_info_id,
+                         'meat_parts_id': meat_parts_id}, Status.SKIPPED)
             if product_info_id is None:
-                c.add_issue(Severity.ERROR, 'Product reference missing (product_id=NULL)', 'product_id')
+                c.add_issue(Severity.ERROR, 'Product reference missing (product_id=NULL)', 'product_id',
+                           code=FindingCode.PACKAGE_ORPHAN_PRODUCT)
             elif meat_parts_id is None:
-                c.add_issue(Severity.ERROR, f'product_info #{product_info_id} has no valid meat_parts reference', 'name_id')
+                c.add_issue(Severity.ERROR, f'product_info #{product_info_id} has no valid meat_parts reference', 'name_id',
+                           code=FindingCode.PACKAGE_ORPHAN_PRODUCT)
             else:
-                c.add_issue(Severity.ERROR, f'Product reference invalid (product_info #{product_info_id} → meat_parts #{meat_parts_id})', 'product_id')
+                c.add_issue(Severity.ERROR, f'Product reference invalid (product_info #{product_info_id} → meat_parts #{meat_parts_id})', 'product_id',
+                           code=FindingCode.PACKAGE_ORPHAN_PRODUCT)
             candidates.append(c)
             continue
 
         # Skip if product candidate is itself skipped (e.g., no category)
         if product_candidate.status == Status.SKIPPED:
-            c = Candidate('Package', 'stock_meat_product_list', legacy_id, {'barcode': barcode}, Status.SKIPPED)
+            c = Candidate('Package', 'stock_meat_product_list', legacy_id,
+                        {'barcode': barcode, 'product_legacy_id': product_info_id,
+                         'meat_parts_id': meat_parts_id}, Status.SKIPPED)
             c.add_issue(Severity.ERROR,
                        f'Product candidate skipped: product_info #{product_info_id} → meat_parts #{meat_parts_id}',
-                       'product_id')
+                       'product_id', code=FindingCode.PACKAGE_ORPHAN_PRODUCT)
             candidates.append(c)
             continue
 
@@ -625,7 +690,8 @@ def map_packages(rows, product_candidates, batch_candidates, pi_to_mp_map, batch
 
         if weight_kg is None or weight_kg <= 0:
             c = Candidate('Package', 'stock_meat_product_list', legacy_id, {'barcode': barcode}, Status.SKIPPED)
-            c.add_issue(Severity.ERROR, f'Invalid weight: {weight_grams}g', 'weight')
+            c.add_issue(Severity.ERROR, f'Invalid weight: {weight_grams}g', 'weight',
+                       code=FindingCode.PACKAGE_INVALID_WEIGHT)
             candidates.append(c)
             continue
 
@@ -640,7 +706,8 @@ def map_packages(rows, product_candidates, batch_candidates, pi_to_mp_map, batch
 
         if canonical_state is None:
             c = Candidate('Package', 'stock_meat_product_list', legacy_id, {'barcode': barcode}, Status.SKIPPED)
-            c.add_issue(Severity.ERROR, f'Unknown storage_status: "{storage_status_raw}"', 'storage_status')
+            c.add_issue(Severity.ERROR, f'Unknown storage_status: "{storage_status_raw}"', 'storage_status',
+                       code=FindingCode.PACKAGE_UNKNOWN_STORAGE_STATUS)
             candidates.append(c)
             continue
 
@@ -677,16 +744,17 @@ def map_packages(rows, product_candidates, batch_candidates, pi_to_mp_map, batch
         if storage_status_raw == 'depleted' and thaw_queue_position > 0:
             c.add_issue(Severity.WARNING,
                        f'storage_status=depleted but thaw_queue_position={thaw_queue_position} (inconsistent)',
-                       'storage_status')
+                       'storage_status', code=FindingCode.PACKAGE_STATE_CONFLICT)
 
         if price < 0:
-            c.add_issue(Severity.WARNING, f'Negative selling_price: {selling_price}', 'selling_price')
+            c.add_issue(Severity.WARNING, f'Negative selling_price: {selling_price}', 'selling_price',
+                       code=FindingCode.PACKAGE_NEGATIVE_PRICE)
 
         # Loyverse duplicate
         if loyverse_sku_str and loyverse_sku_str in seen_loyverse_skus:
             c.add_issue(Severity.WARNING,
                        f'Duplicate loyverse_sku (first at legacy #{seen_loyverse_skus[loyverse_sku_str]})',
-                       'loyverse_sku')
+                       'loyverse_sku', code=FindingCode.PACKAGE_DUPLICATE_LOYVERSE_SKU)
 
         candidates.append(c)
         seen_barcodes[barcode] = legacy_id
@@ -863,227 +931,3 @@ class DryRunEngine:
             },
         }
         Path(path).write_text(json.dumps(output, indent=2, default=str))
-
-
-# ============================================================
-# RESOLUTION CLASSIFICATION
-# ============================================================
-
-class Resolution:
-    AUTO_FIX_SAFE = 'AUTO_FIX_SAFE'
-    MANUAL_REVIEW = 'MANUAL_REVIEW'
-    STRUCTURAL_PROBLEM = 'STRUCTURAL_PROBLEM'
-    MIGRATION_BLOCKER = 'MIGRATION_BLOCKER'
-    ACCEPTED_EXCEPTION = 'ACCEPTED_EXCEPTION'
-
-
-def classify_findings(results):
-    """
-    Classify every finding from the dry-run into a resolution category.
-
-    Returns:
-        dict: {findings: [...], summary: {...}}
-    """
-    classifications = []
-
-    # ── Category findings ──
-    for c in results.get('categories', []):
-        for issue in c.issues:
-            finding = {
-                'entity': 'Category',
-                'legacy_id': c.legacy_id,
-                'severity': issue.severity,
-                'message': issue.message,
-                'field': issue.field,
-            }
-            if 'test' in issue.message.lower():
-                finding['resolution'] = Resolution.ACCEPTED_EXCEPTION
-                finding['rule'] = 'SKIP — test data, do not migrate'
-            elif 'empty' in issue.message.lower():
-                finding['resolution'] = Resolution.MIGRATION_BLOCKER
-                finding['rule'] = 'Cannot create Category without name'
-            elif 'duplicate' in issue.message.lower():
-                finding['resolution'] = Resolution.MANUAL_REVIEW
-                finding['rule'] = 'Duplicate category code — need human decision'
-            else:
-                finding['resolution'] = Resolution.MANUAL_REVIEW
-                finding['rule'] = 'Unknown — needs review'
-            classifications.append(finding)
-
-    # ── Supplier findings ──
-    for c in results.get('suppliers', []):
-        for issue in c.issues:
-            finding = {
-                'entity': 'Supplier',
-                'legacy_id': c.legacy_id,
-                'severity': issue.severity,
-                'message': issue.message,
-                'field': issue.field,
-            }
-            if 'empty' in issue.message.lower():
-                finding['resolution'] = Resolution.MIGRATION_BLOCKER
-                finding['rule'] = 'Cannot create Supplier without name'
-            elif 'duplicate' in issue.message.lower():
-                finding['resolution'] = Resolution.MANUAL_REVIEW
-                finding['rule'] = 'Duplicate supplier name — need human decision'
-            else:
-                finding['resolution'] = Resolution.MANUAL_REVIEW
-                finding['rule'] = 'Unknown — needs review'
-            classifications.append(finding)
-
-    # ── Product findings ──
-    for c in results.get('products', []):
-        for issue in c.issues:
-            finding = {
-                'entity': 'Product',
-                'legacy_id': c.legacy_id,
-                'data_name': c.data.get('name', ''),
-                'severity': issue.severity,
-                'message': issue.message,
-                'field': issue.field,
-            }
-            if 'category reference missing' in issue.message.lower():
-                finding['resolution'] = Resolution.MIGRATION_BLOCKER
-                finding['rule'] = 'Cannot create Product without Category'
-            elif 'category reference invalid' in issue.message.lower():
-                finding['resolution'] = Resolution.MIGRATION_BLOCKER
-                finding['rule'] = 'Category reference points to test data — skip product'
-            elif 'duplicate sku' in issue.message.lower():
-                finding['resolution'] = Resolution.MANUAL_REVIEW
-                finding['rule'] = 'Duplicate SKU — need decision: merge or assign new SKU'
-            elif 'empty' in issue.message.lower():
-                finding['resolution'] = Resolution.MIGRATION_BLOCKER
-                finding['rule'] = 'Cannot create Product without name'
-            else:
-                finding['resolution'] = Resolution.MANUAL_REVIEW
-                finding['rule'] = 'Unknown — needs review'
-            classifications.append(finding)
-
-    # ── Batch findings ──
-    for c in results.get('batches', []):
-        for issue in c.issues:
-            finding = {
-                'entity': 'Batch',
-                'legacy_id': c.legacy_id,
-                'data_batch': c.data.get('batch_number', '?'),
-                'severity': issue.severity,
-                'message': issue.message,
-                'field': issue.field,
-            }
-            if 'product reference' in issue.message.lower():
-                finding['resolution'] = Resolution.MIGRATION_BLOCKER
-                finding['rule'] = 'Batch references invalid product — cannot create'
-            elif 'supplier' in issue.message.lower() and 'warning' in issue.severity.lower():
-                finding['resolution'] = Resolution.AUTO_FIX_SAFE
-                finding['rule'] = 'Missing supplier — create Batch with unknown supplier'
-            elif 'weight' in issue.message.lower() and 'info' in issue.severity.lower():
-                finding['resolution'] = Resolution.ACCEPTED_EXCEPTION
-                finding['rule'] = 'Product_info.weight=0.0 — not used for Package weight'
-            elif 'invalid lot' in issue.message.lower():
-                finding['resolution'] = Resolution.MANUAL_REVIEW
-                finding['rule'] = 'Invalid lot number — needs review'
-            else:
-                finding['resolution'] = Resolution.MANUAL_REVIEW
-                finding['rule'] = 'Unknown — needs review'
-            classifications.append(finding)
-
-    # ── Package findings ──
-    for c in results.get('packages', []):
-        for issue in c.issues:
-            finding = {
-                'entity': 'Package',
-                'legacy_id': c.legacy_id,
-                'data_barcode': c.data.get('barcode', '?'),
-                'severity': issue.severity,
-                'message': issue.message,
-                'field': issue.field,
-            }
-            if 'product reference' in issue.message.lower() and 'orphan' in issue.message.lower():
-                finding['resolution'] = Resolution.MIGRATION_BLOCKER
-                finding['rule'] = 'Package references invalid product_info chain'
-            elif 'product reference' in issue.message.lower():
-                finding['resolution'] = Resolution.MIGRATION_BLOCKER
-                finding['rule'] = 'Package references invalid product'
-            elif 'unknown storage_status' in issue.message.lower():
-                finding['resolution'] = Resolution.MIGRATION_BLOCKER
-                finding['rule'] = 'Unmapped storage_status "pending" — need decision: PACKED or skip?'
-            elif 'empty barcode' in issue.message.lower():
-                finding['resolution'] = Resolution.MIGRATION_BLOCKER
-                finding['rule'] = 'Package must have a barcode'
-            elif 'duplicate barcode' in issue.message.lower():
-                finding['resolution'] = Resolution.MIGRATION_BLOCKER
-                finding['rule'] = 'Duplicate barcode — physical package identity conflict'
-            elif 'invalid weight' in issue.message.lower():
-                finding['resolution'] = Resolution.MIGRATION_BLOCKER
-                finding['rule'] = 'Zero or negative weight — cannot create Package'
-            elif 'inconsistent' in issue.message.lower() or 'conflicting' in issue.message.lower():
-                finding['resolution'] = Resolution.MANUAL_REVIEW
-                finding['rule'] = 'Conflicting state fields — need human decision'
-            elif 'negative selling_price' in issue.message.lower():
-                finding['resolution'] = Resolution.MANUAL_REVIEW
-                finding['rule'] = 'Negative price — need review'
-            elif 'duplicate loyverse' in issue.message.lower():
-                finding['resolution'] = Resolution.MANUAL_REVIEW
-                finding['rule'] = 'Duplicate Loyverse SKU — need review'
-            else:
-                finding['resolution'] = Resolution.MANUAL_REVIEW
-                finding['rule'] = 'Unknown — needs review'
-            classifications.append(finding)
-
-    # ── Summary ──
-    summary = {
-        'total_findings': len(classifications),
-        'auto_fix_safe': sum(1 for f in classifications if f['resolution'] == Resolution.AUTO_FIX_SAFE),
-        'manual_review': sum(1 for f in classifications if f['resolution'] == Resolution.MANUAL_REVIEW),
-        'structural_problem': sum(1 for f in classifications if f['resolution'] == Resolution.STRUCTURAL_PROBLEM),
-        'migration_blocker': sum(1 for f in classifications if f['resolution'] == Resolution.MIGRATION_BLOCKER),
-        'accepted_exception': sum(1 for f in classifications if f['resolution'] == Resolution.ACCEPTED_EXCEPTION),
-    }
-
-    return {'findings': classifications, 'summary': summary}
-
-
-def print_resolution_report(classification):
-    """Print a human-readable resolution report."""
-    s = classification['summary']
-    findings = classification['findings']
-
-    print()
-    print('=' * 60)
-    print('DATA QUALITY RESOLUTION REPORT')
-    print('=' * 60)
-    print(f'  Total findings:         {s["total_findings"]}')
-    print(f'  AUTO_FIX_SAFE:          {s["auto_fix_safe"]}')
-    print(f'  MANUAL_REVIEW:          {s["manual_review"]}')
-    print(f'  STRUCTURAL_PROBLEM:     {s["structural_problem"]}')
-    print(f'  MIGRATION_BLOCKER:      {s["migration_blocker"]}')
-    print(f'  ACCEPTED_EXCEPTION:     {s["accepted_exception"]}')
-    print()
-
-    # Group by resolution
-    by_resolution = {}
-    for f in findings:
-        by_resolution.setdefault(f['resolution'], []).append(f)
-
-    for resolution in [Resolution.MIGRATION_BLOCKER, Resolution.MANUAL_REVIEW,
-                       Resolution.AUTO_FIX_SAFE, Resolution.ACCEPTED_EXCEPTION,
-                       Resolution.STRUCTURAL_PROBLEM]:
-        items = by_resolution.get(resolution, [])
-        if not items:
-            continue
-        print('-' * 60)
-        print(f'  {resolution} ({len(items)})')
-        print('-' * 60)
-        for f in items:
-            entity_id = f.get('legacy_id', '?')
-            name = f.get('data_name') or f.get('data_barcode') or f.get('data_batch') or ''
-            label = f'#{entity_id} {name}'.strip()
-            print(f'    {f["entity"]:12s} {label}')
-            print(f'      Rule: {f["rule"]}')
-            print(f'      Message: {f["message"]}')
-            print()
-
-    print('=' * 60)
-    print('RESOLUTION COMPLETE — NO DATA WAS MODIFIED')
-    print('=' * 60)
-    print()
