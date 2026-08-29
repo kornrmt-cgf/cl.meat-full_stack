@@ -286,21 +286,25 @@ class TestDependencyGraph(TestCase):
 class TestProvisionalMapping(TestCase):
     """Provisional mappings must not be auto-applied."""
 
-    def test_pending_mapping_is_provisional(self):
+    def test_pending_mapping_is_approved(self):
         pm = PROVISIONAL_MAPPINGS['pending_to_packed']
-        self.assertEqual(pm['status'], 'PROVISIONAL')
-        self.assertTrue(pm['requires_business_confirmation'])
+        self.assertEqual(pm['status'], 'APPROVED')
+        self.assertFalse(pm['requires_business_confirmation'])
         self.assertEqual(pm['confidence'], 'HIGH')
 
-    def test_all_provisionals_require_confirmation(self):
-        for pm in PROVISIONAL_MAPPINGS.values():
-            self.assertTrue(pm['requires_business_confirmation'],
-                'All provisional mappings must require business confirmation')
-
-    def test_product_10_mapping_is_provisional(self):
-        pm = PROVISIONAL_MAPPINGS['product_10_to_chicken']
-        self.assertEqual(pm['status'], 'PROVISIONAL')
+    def test_approved_mappings_do_not_require_confirmation(self):
+        for key in ['pending_to_packed', 'product_10_to_chicken']:
+            pm = PROVISIONAL_MAPPINGS[key]
+            self.assertFalse(pm['requires_business_confirmation'],
+                f'{key} should not require confirmation (approved)')
+        # Duplicate SKU still requires confirmation
+        pm = PROVISIONAL_MAPPINGS['assign_new_skus']
         self.assertTrue(pm['requires_business_confirmation'])
+
+    def test_product_10_mapping_is_approved(self):
+        pm = PROVISIONAL_MAPPINGS['product_10_to_chicken']
+        self.assertEqual(pm['status'], 'APPROVED')
+        self.assertFalse(pm['requires_business_confirmation'])
 
 
 # ============================================================
@@ -314,9 +318,9 @@ class TestDuplicateSkuResolution(TestCase):
         self.assertEqual(CLASSIFICATION_RULES[FindingCode.PRODUCT_DUPLICATE_SKU],
                         Resolution.MANUAL_REVIEW)
 
-    def test_assign_new_sku_provisional(self):
+    def test_assign_new_sku_pending(self):
         pm = PROVISIONAL_MAPPINGS['assign_new_skus']
-        self.assertEqual(pm['status'], 'PROVISIONAL')
+        self.assertEqual(pm['status'], 'PENDING_FINAL_SKU')
         self.assertTrue(pm['requires_business_confirmation'])
 
 
