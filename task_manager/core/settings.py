@@ -82,7 +82,17 @@ DATABASES = {
         "PASSWORD": os.environ.get("DB_PASSWORD", ""),
         "HOST": os.environ.get("DB_HOST", ""),
         "PORT": os.environ.get("DB_PORT", ""),
-    }
+    },
+    # PostgreSQL staging — used by migration simulation (02.4)
+    # Do NOT add TEST.MIRROR — the staging DB is managed independently.
+    "staging": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.environ.get("STAGING_DB_NAME", "clmeat_staging"),
+        "USER": os.environ.get("STAGING_DB_USER", "macky_01"),
+        "PASSWORD": os.environ.get("STAGING_DB_PASSWORD", ""),
+        "HOST": os.environ.get("STAGING_DB_HOST", "localhost"),
+        "PORT": os.environ.get("STAGING_DB_PORT", "5432"),
+    },
 }
 
 # === AUTH ===
