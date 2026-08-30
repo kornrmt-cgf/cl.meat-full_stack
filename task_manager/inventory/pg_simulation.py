@@ -31,6 +31,101 @@ from inventory.resolution import ResolutionApplier
 
 
 # ============================================================
+# STAGING ENVIRONMENT GUARD
+# ============================================================
+
+# Explicit staging environment marker.
+# Destructive operations require this to be set.
+EXPECTED_DJANGO_ENV = 'staging'
+
+# Dangerous database name patterns — refuse if found.
+_DANGEROUS_DB_NAMES = frozenset({
+    'production', 'prod', 'main', 'live', 'master',
+    'postgres', 'default', 'db',
+})
+
+
+class StagingGuardError(Exception):
+    """Raised when staging safety checks fail."""
+    pass
+
+
+class StagingGuard:
+    """
+    Verifies that a database connection points to the authorized
+    staging database before any destructive operations.
+
+    Safety checks:
+    1. DJANGO_ENV must equal 'staging'
+    2. Database name must match expected staging name
+    3. Database name must not contain dangerous patterns
+    4. Host must be local (not a remote production server)
+    """
+
+    def __init__(self, expected_dbname=None, expected_env=None):
+        self.expected_dbname = (
+            expected_dbname
+            or os.environ.get('STAGING_DB_NAME', 'clmeat_staging'))
+        # The expected environment is always the safe default ('staging').
+        # Do NOT read from os.environ here — that would defeat the guard.
+        self.expected_env = expected_env or EXPECTED_DJANGO_ENV
+
+    def verify(self, conn):
+        """
+        Verify the connection points to the authorized staging database.
+
+        Raises StagingGuardError if any check fails.
+        Returns the verified database identity on success.
+        """
+        # Check 1: Environment must be explicitly 'staging'
+        env = os.environ.get('DJANGO_ENV', '')
+        if env != self.expected_env:
+            raise StagingGuardError(
+                f'STAGING SAFETY ABORT: DJANGO_ENV="{env}" — '
+                f'expected "{self.expected_env}". '
+                'Refusing destructive operations without explicit '
+                'staging environment marker.')
+
+        # Check 2: Query the actual database name from PostgreSQL
+        cur = conn.cursor()
+        cur.execute('SELECT current_database()')
+        actual_dbname = cur.fetchone()[0]
+
+        if actual_dbname != self.expected_dbname:
+            raise StagingGuardError(
+                f'STAGING SAFETY ABORT: Connected to database '
+                f'"{actual_dbname}" — expected "{self.expected_dbname}". '
+                'Refusing to truncate non-staging database.')
+
+        # Check 3: Database name must not contain dangerous patterns
+        db_lower = actual_dbname.lower()
+        for pattern in _DANGEROUS_DB_NAMES:
+            if pattern in db_lower:
+                raise StagingGuardError(
+                    f'STAGING SAFETY ABORT: Database name '
+                    f'"{actual_dbname}" contains dangerous pattern '
+                    f'"{pattern}". Refusing destructive operations.')
+
+        # Check 4: Host should be local
+        try:
+            cur.execute('SELECT inet_server_addr()')
+            host = cur.fetchone()[0]
+            if host and host not in ('127.0.0.1', '::1', None):
+                raise StagingGuardError(
+                    f'STAGING SAFETY ABORT: Database server is remote '
+                    f'("{host}"). Refusing destructive operations '
+                    f'on non-local staging database.')
+        except psycopg2.errors.UndefinedFunction:
+            pass  # SQLite backend — no inet_server_addr()
+
+        return {
+            'database': actual_dbname,
+            'env': env,
+            'host': host if 'host' in dir() else 'local',
+        }
+
+
+# ============================================================
 # FAILURE CATEGORIES (same as SQLite simulation)
 # ============================================================
 
@@ -114,8 +209,19 @@ def _pg_connect():
     return conn
 
 
+_staging_guard = StagingGuard()
+
+
 def _pg_truncate_all(conn):
-    """Truncate all inventory tables to reset staging DB."""
+    """
+    Truncate all inventory tables to reset staging DB.
+
+    SAFETY: Verifies database identity BEFORE executing any
+    destructive SQL. If verification fails, ZERO SQL is executed.
+    """
+    # Verify staging identity BEFORE any destructive operations
+    _staging_guard.verify(conn)
+
     cur = conn.cursor()
     for table in TRUNCATE_TABLES:
         cur.execute(f'TRUNCATE TABLE {table} CASCADE')
