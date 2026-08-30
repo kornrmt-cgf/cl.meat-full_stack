@@ -30,7 +30,8 @@ TRANSITIONS = {
     'READY_FOR_THAW':   ['THAW_QUEUED'],
     'THAW_QUEUED':      ['THAWING', 'PACKED'],  # cancel → back to PACKED
     'THAWING':          ['READY_FOR_SALE'],
-    'READY_FOR_SALE':   ['ON_DISPLAY'],
+    # Phase 03: added PROCESSING and DISCARDED shortcuts for direct sale/discard
+    'READY_FOR_SALE':   ['ON_DISPLAY', 'PROCESSING', 'DISCARDED'],
     'ON_DISPLAY':       ['REFREEZE_PENDING', 'PROCESSING', 'DISCARDED'],
     'REFREEZE_PENDING': ['FREEZING'],
     'PROCESSING':       ['COMPLETED'],
