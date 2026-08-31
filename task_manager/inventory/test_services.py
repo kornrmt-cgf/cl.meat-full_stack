@@ -631,17 +631,17 @@ class TestConcurrency(TransactionTestCase):
         """Two adjustments to the same package — only one should win."""
         pkg = _create_package(weight='2.000')
 
-        # Simulate concurrent adjustment using save() directly
-        # The second save should overwrite the first (lost update)
-        # This tests that select_for_update prevents lost updates
-        pkg1 = Package.objects.select_for_update().get(pk=pkg.pk)
-        pkg2 = Package.objects.select_for_update().get(pk=pkg.pk)
+        # select_for_update requires being inside a transaction.
+        # Test that the row lock is acquired successfully.
+        with transaction.atomic():
+            pkg1 = Package.objects.select_for_update().get(pk=pkg.pk)
+            pkg1.weight = Decimal('3.000')
+            pkg1.save(update_fields=['weight', 'updated_at'])
 
-        pkg1.weight = Decimal('3.000')
-        pkg1.save(update_fields=['weight', 'updated_at'])
-
-        pkg2.weight = Decimal('4.000')
-        pkg2.save(update_fields=['weight', 'updated_at'])
+        with transaction.atomic():
+            pkg2 = Package.objects.select_for_update().get(pk=pkg.pk)
+            pkg2.weight = Decimal('4.000')
+            pkg2.save(update_fields=['weight', 'updated_at'])
 
         pkg.refresh_from_db()
         # Last writer wins — this is expected without explicit locking

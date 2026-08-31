@@ -95,6 +95,22 @@ DATABASES = {
     },
 }
 
+# When DJANGO_ENV=staging, override default database to PostgreSQL staging.
+# This makes Django's test runner create a real PostgreSQL test database,
+# enabling select_for_update() and true row-level concurrency in tests.
+if os.environ.get("DJANGO_ENV") == "staging":
+    DATABASES["default"] = {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.environ.get("STAGING_DB_NAME", "clmeat_staging"),
+        "USER": os.environ.get("STAGING_DB_USER", "macky_01"),
+        "PASSWORD": os.environ.get("STAGING_DB_PASSWORD", ""),
+        "HOST": os.environ.get("STAGING_DB_HOST", "localhost"),
+        "PORT": os.environ.get("STAGING_DB_PORT", "5432"),
+        "TEST": {
+            "NAME": "test_clmeat_staging",
+        },
+    }
+
 # === AUTH ===
 AUTH_USER_MODEL = "accounts.User"
 LOGIN_URL = "accounts:login"
