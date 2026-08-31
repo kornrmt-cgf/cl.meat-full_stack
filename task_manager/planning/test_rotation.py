@@ -2191,3 +2191,178 @@ class TestInsertOrderingAndProfileIsolation(TransactionTestCase):
             rotation_plan__thaw_profile=profile,
             status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START]
         ).count()
+
+
+# ============================================================
+# 19. PACKAGE-LEVEL CONCURRENCY (real PostgreSQL)
+# ============================================================
+
+class TestPackageConcurrency(TransactionTestCase):
+    """
+    Package row locking prevents concurrent add-to-queue and plan creation
+    for the same package.
+    """
+
+    def _is_pg(self):
+        from django.db import connection
+        return connection.vendor == 'postgresql'
+
+    def _get_active_queue(self, pkg):
+        return ThawQueueEntry.objects.filter(
+            package=pkg,
+            status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START, QueueStatus.STARTED]
+        )
+
+    def _get_active_plans(self, pkg):
+        return RotationPlan.objects.filter(
+            package=pkg,
+            status__in=[PlanStatus.PLANNED, PlanStatus.READY, PlanStatus.IN_PROGRESS]
+        )
+
+    # --- 1. Same package + same plan + 2 concurrent add_to_thaw_queue ---
+
+    def test_concurrent_add_same_package_same_plan(self):
+        """Two threads call add_to_thaw_queue on same package+plan."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL')
+
+        fp = _create_freeze_profile()
+        tp = _create_thaw_profile(capacity=5)
+        pkg = _frozen_pkg()
+        plan = create_rotation_plan(
+            pkg, timezone.now() + timedelta(days=3), fp, tp)
+
+        results = []
+        errors = []
+
+        def worker(name):
+            try:
+                add_to_thaw_queue(pkg, plan, actor=name)
+                results.append(name)
+            except Exception as e:
+                errors.append((name, str(e)))
+
+        t1 = threading.Thread(target=worker, args=('W1',))
+        t2 = threading.Thread(target=worker, args=('W2',))
+        t1.start()
+        time.sleep(0.01)
+        t2.start()
+        t1.join(timeout=15)
+        t2.join(timeout=15)
+
+        self.assertEqual(len(results), 1,
+            f'Expected exactly 1 success, got {len(results)}: {results}')
+        self.assertEqual(len(errors), 1,
+            f'Expected exactly 1 error, got {len(errors)}: {errors}')
+
+        # Exactly 1 active queue entry
+        active = self._get_active_queue(pkg)
+        self.assertEqual(active.count(), 1,
+            f'Expected 1 active queue entry, got {active.count()}')
+
+    # --- 2. Same package + different plans concurrently ---
+
+    def test_concurrent_add_same_package_different_plans(self):
+        """Two threads try to add same package with different plans."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL')
+
+        fp = _create_freeze_profile()
+        tp = _create_thaw_profile(capacity=5)
+        pkg = _frozen_pkg()
+        now = timezone.now()
+        plan = create_rotation_plan(pkg, now + timedelta(days=3), fp, tp)
+
+        results = []
+        errors = []
+
+        def worker(name):
+            try:
+                add_to_thaw_queue(pkg, plan, actor=name)
+                results.append(name)
+            except Exception as e:
+                errors.append((name, str(e)))
+
+        t1 = threading.Thread(target=worker, args=('W1',))
+        t2 = threading.Thread(target=worker, args=('W2',))
+        t1.start()
+        time.sleep(0.01)
+        t2.start()
+        t1.join(timeout=15)
+        t2.join(timeout=15)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(len(errors), 1)
+
+        active = self._get_active_queue(pkg)
+        self.assertEqual(active.count(), 1)
+
+    # --- 3. Same package across different ThawProfiles ---
+
+    def test_same_package_different_profiles_exactly_one_queue(self):
+        """Same package in two profiles: package lock prevents duplicate queue."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL')
+
+        fp = _create_freeze_profile()
+        tp_a = _create_thaw_profile(capacity=5)
+        tp_a.name = 'Room-A'; tp_a.save()
+        now = timezone.now()
+
+        # Two frozen packages — each can only have 1 active queue entry
+        pkg1 = _frozen_pkg()
+        pkg2 = _frozen_pkg()
+        plan1 = create_rotation_plan(pkg1, now + timedelta(days=3), fp, tp_a)
+        plan2 = create_rotation_plan(pkg2, now + timedelta(days=3), fp, tp_a)
+
+        add_to_thaw_queue(pkg1, plan1, actor='test')
+        add_to_thaw_queue(pkg2, plan2, actor='test')
+
+        # Second add for pkg1 fails: package is no longer FROZEN
+        # (package lock serializes the check — no race window)
+        with self.assertRaises(ValueError):
+            add_to_thaw_queue(pkg1, plan1, actor='test')
+
+        # Each package has exactly 1 active queue entry
+        self.assertEqual(self._get_active_queue(pkg1).count(), 1)
+        self.assertEqual(self._get_active_queue(pkg2).count(), 1)
+
+    # --- 4. Concurrent plan creation for same package ---
+
+    def test_concurrent_plan_creation_same_package(self):
+        """Two threads try to create plans for same package — exactly 1 active."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL')
+
+        fp = _create_freeze_profile()
+        tp = _create_thaw_profile()
+        pkg = _frozen_pkg()
+        now = timezone.now()
+
+        results = []
+        errors = []
+
+        def worker(name, target):
+            try:
+                create_rotation_plan(pkg, target, fp, tp, actor=name)
+                results.append(name)
+            except Exception as e:
+                errors.append((name, str(e)))
+
+        t1 = threading.Thread(
+            target=worker, args=('W1', now + timedelta(days=3)))
+        t2 = threading.Thread(
+            target=worker, args=('W2', now + timedelta(days=4)))
+        t1.start()
+        time.sleep(0.01)
+        t2.start()
+        t1.join(timeout=15)
+        t2.join(timeout=15)
+
+        self.assertEqual(len(results), 1,
+            f'Expected 1 success, got {len(results)}: {results}')
+        self.assertEqual(len(errors), 1,
+            f'Expected 1 error, got {len(errors)}: {errors}')
+
+        active = self._get_active_plans(pkg)
+        self.assertEqual(active.count(), 1)

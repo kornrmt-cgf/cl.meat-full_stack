@@ -89,7 +89,17 @@ def create_rotation_plan(package, target_ready_at, freeze_profile, thaw_profile,
     """
     Create a rotation plan.  AUTO calculates from profiles;
     CUSTOM uses overrides when provided.
+
+    Locks the Package row to serialize concurrent plan creation for the same
+    package.  Two concurrent calls for the same package will see the same
+    state — exactly one will find no active plan and proceed.
     """
+    # Lock package row to serialize concurrent plan-creation for same package.
+    # Acquire the lock, then refresh the original parameter so the caller
+    # sees the latest state (important when called from _thaw_queued_pkg etc.).
+    Package.objects.select_for_update().get(pk=package.pk)
+    package.refresh_from_db()
+
     if package.current_state not in (PackageState.PACKED, PackageState.FROZEN):
         raise ValueError(f"Package must be PACKED or FROZEN, got {package.current_state}")
     # Allow new plan only if no active plan exists for this package
@@ -183,23 +193,13 @@ def add_to_thaw_queue(package, rotation_plan, actor=''):
     """
     Add a package to the thaw queue with serialized capacity admission.
 
-    Critical concurrency guarantee:
-        The capacity check and queue entry creation are serialized by
-        a SELECT FOR UPDATE on a CapacityLock row (one per ThawProfile).
-        This prevents two concurrent requests from both observing
-        "capacity available" and both inserting — which would exceed
-        the configured thaw_capacity.
-
-    Lock protocol:
-        1. Acquire CapacityLock row for the profile (SELECT FOR UPDATE)
-        2. Re-check interval overlaps (now serialized — no race window)
-        3. Create queue entry + transition package
-        4. Release lock on COMMIT / rollback on any failure
-
-    Preconditions checked BEFORE lock acquisition:
-        1. rotation_plan exists
-        2. package is FROZEN
-        3. not already in queue
+    Lock protocol (two-phase lock — Package first, then CapacityLock):
+        1. Lock Package row (SELECT FOR UPDATE) — serializes per-package checks
+        2. Refresh and verify: package is FROZEN, not already in queue
+        3. Acquire CapacityLock for the profile — serializes capacity admission
+        4. Re-check interval overlaps inside capacity lock
+        5. Create queue entry + transition package
+        6. Release all locks on COMMIT / rollback on any failure
 
     Raises:
         ValueError: If preconditions fail or capacity exceeded
@@ -210,6 +210,16 @@ def add_to_thaw_queue(package, rotation_plan, actor=''):
 
     if rotation_plan is None:
         raise ValueError("rotation_plan is required")
+
+    profile = rotation_plan.thaw_profile
+
+    # ── STEP 1: Lock Package row (serializes per-package identity checks) ──
+    #  Acquire the row lock, then refresh the ORIGINAL package parameter
+    #  so the caller's reference also sees the latest state.
+    Package.objects.select_for_update().get(pk=package.pk)
+    package.refresh_from_db()  # updates the object the caller also references
+
+    # ── STEP 2: Verify preconditions UNDER package lock ──
     if package.current_state != PackageState.FROZEN:
         raise ValueError(f"Must be FROZEN, got {package.current_state}")
     if ThawQueueEntry.objects.filter(
@@ -218,13 +228,10 @@ def add_to_thaw_queue(package, rotation_plan, actor=''):
     ).exists():
         raise ValueError("Already in thaw queue")
 
-    profile = rotation_plan.thaw_profile
-
-    # ── STEP 1: Acquire capacity lock (serializes all admissions for this profile) ──
+    # ── STEP 3: Acquire capacity lock (serializes all admissions for this profile) ──
     lock = _acquire_capacity_lock(profile)
 
-    # ── STEP 2: Re-check interval overlaps INSIDE the lock ──
-    #  This is now safe — no other thread can pass this point until we commit/rollback.
+    # ── STEP 4: Re-check interval overlaps INSIDE the capacity lock ──
     new_start = rotation_plan.planned_thaw_start_at
     new_end = rotation_plan.target_ready_at
     overlaps = check_thaw_interval_overlap(profile, new_start, new_end, exclude_package=package)
@@ -234,15 +241,11 @@ def add_to_thaw_queue(package, rotation_plan, actor=''):
             f"slots occupied during [{new_start} — {new_end}]"
         )
 
-    # ── STEP 3: Transition FROZEN → READY_FOR_THAW ──
+    # ── STEP 5: Transition FROZEN → READY_FOR_THAW ──
     if can_transition(package.current_state, 'READY_FOR_THAW'):
         transition_package(package, 'READY_FOR_THAW', actor=actor)
 
-    # ── STEP 4: Create entry + recalculate positions (serialized by capacity lock) ──
-    #  Positions are determined by _recalculate_queue_positions using
-    #  QUEUE_ORDERING = (planned_start_at, created_at, pk).
-    #  A new entry with an earlier timestamp immediately receives the
-    #  correct position — no manual recalculation required later.
+    # ── STEP 6: Create entry + recalculate positions ──
     entry = ThawQueueEntry.objects.create(
         package=package, rotation_plan=rotation_plan,
         rotation_cycle=rotation_plan.rotation_cycle,
@@ -252,13 +255,10 @@ def add_to_thaw_queue(package, rotation_plan, actor=''):
         status=QueueStatus.QUEUED,
     )
 
-    # Assign correct position using the stable ordering rule
     _recalculate_queue_positions(profile=profile)
-
-    # Refresh to return the entry with its actual position from DB
     entry.refresh_from_db()
 
-    # ── STEP 5: Transition READY_FOR_THAW → THAW_QUEUED ──
+    # ── STEP 7: Transition READY_FOR_THAW → THAW_QUEUED ──
     transition_package(package, 'THAW_QUEUED', actor=actor)
     return entry
 
