@@ -4,20 +4,64 @@ Inventory Services — Single Source of Truth for Stock Operations.
 All stock mutations go through service functions here.
 Views/API call services, never modify models directly.
 
-Stock Rules:
-- Weight is always Decimal (never float)
-- Package weight > 0 (MinValueValidator 0.001)
-- Stock cannot go negative
-- Every mutation creates a StockMovement audit record
-- Package state transitions go through state_machine.transition_package()
+══════════════════════════════════════════════════════════════
+STOCK RULES (Phase 03 Authoritative)
+══════════════════════════════════════════════════════════════
 
-Movement Types:
-- RECEIVE: stock arrives, package created
-- PACK: package created from batch
-- MOVE: package moved between locations
-- ADJUST: weight/price correction
-- SELL: package sold
-- DISCARD: package discarded
+Available Stock (single source of truth):
+    available_stock = SUM(package.weight)
+        WHERE package.current_state IN (
+            PACKED, FREEZING, FROZEN, READY_FOR_THAW,
+            THAW_QUEUED, THAWING, READY_FOR_SALE, ON_DISPLAY
+        )
+
+    Dashboard, API, reports, and Loyverse integration all use
+    get_available_stock(). No other calculation is authoritative.
+
+    StockMovement is the audit trail, NOT the numeric source
+    of truth. Stock totals are computed from Package.weight,
+    not from summing StockMovement records.
+
+══════════════════════════════════════════════════════════════
+AUDIT SEMANTICS
+══════════════════════════════════════════════════════════════
+
+StockMovement: physical stock operations (location, weight, lifecycle)
+    - RECEIVE: package created from batch
+    - PACK:    package sealed for storage
+    - MOVE:    package moved between locations
+    - ADJUST:  weight correction after re-weighing
+    - SOLD:    package sold to customer
+    - DISCARDED: package discarded (damaged/expired)
+
+PriceChangeHistory: price-only changes (no StockMovement created)
+    - Manual price override
+    - Auto price recalculation
+    - Cost margin / discount adjustments
+
+══════════════════════════════════════════════════════════════
+STATE SEMANTICS (Phase 03)
+══════════════════════════════════════════════════════════════
+
+Lifecycle: PACKED → FREEZING → FROZEN → READY_FOR_THAW →
+           THAW_QUEUED → THAWING → READY_FOR_SALE → ON_DISPLAY
+
+Sale: ON_DISPLAY → PROCESSING → COMPLETED
+    SALE/DISCARD semantics are represented by StockMovement
+    records (SOLD/DISCARDED movement_type), not by a dedicated
+    SOLD state. COMPLETED is the terminal state for both sale
+    and discard.
+
+Discard: ON_DISPLAY → DISCARDED → COMPLETED
+
+══════════════════════════════════════════════════════════════
+CONCURRENCY
+══════════════════════════════════════════════════════════════
+
+- Package mutations use select_for_update() for row-level locking
+- BarcodeSequence uses select_for_update() for atomic increment
+- Price changes use transaction.atomic + row lock
+- All service functions use @transaction.atomic
 """
 import math
 from datetime import datetime
@@ -757,10 +801,17 @@ def get_package_by_barcode(barcode):
 # Used by existing test suites.
 # ============================================================
 
+@transaction.atomic
 def generate_barcode(product, batch):
     """Generate a unique barcode for a package.
 
     Uses the product's barcode_prefix + batch number + sequence.
+
+    CONCURRENCY SAFETY: The BarcodeSequence row is locked with
+    select_for_update() inside an atomic transaction, so two
+    concurrent calls cannot produce the same sequence number.
+
+    Package.barcode UNIQUE constraint is the final safety net.
 
     Args:
         product: Product instance
@@ -780,8 +831,8 @@ def generate_barcode(product, batch):
     prefix = product.barcode_prefix or '0000'
     batch_num = batch.batch_number[-4:] if len(batch.batch_number) >= 4 else batch.batch_number
 
-    # Get or create sequence counter
-    seq, _ = BarcodeSequence.objects.get_or_create(
+    # Atomic sequence: lock row → increment → save, all inside @transaction.atomic
+    seq, _ = BarcodeSequence.objects.select_for_update().get_or_create(
         product=product,
         batch_number=batch.batch_number,
         supplier_id=batch.supplier_id,
@@ -796,44 +847,61 @@ def generate_barcode(product, batch):
 def calculate_package_price(product, weight, mode='auto', value=None):
     """Calculate package price based on product pricing and weight.
 
+    PRICING RULE: Always returns Decimal. Calculation uses Decimal
+    throughout; ceiling is applied via (x + 0.999...) truncated to
+    integer THB. Rounding rule: ceiling to nearest whole THB.
+
     Modes:
-    - auto: selling_price_per_kg * weight
+    - auto: selling_price_per_kg * weight (ceiling to whole THB)
     - price_per_kg: value * weight
     - cost_margin: cost_per_kg * (1 + value/100) * weight
     - discount: selling_price_per_kg * (1 - value/100) * weight
 
     Args:
         product: Product instance
-        weight: weight in kg
+        weight: weight in kg (Decimal-safe)
         mode: calculation mode
         value: mode-specific parameter
 
     Returns:
-        Decimal: calculated price
+        Decimal: calculated price in THB (always Decimal, never int)
 
     Raises:
         ValueError: if mode is invalid
     """
     weight = Decimal(str(weight))
     if weight <= 0:
-        return 0
+        return Decimal('0')
 
+    raw = Decimal('0')
     if mode == 'auto':
-        return math.ceil(product.selling_price_per_kg * weight)
+        raw = product.selling_price_per_kg * weight
     elif mode == 'price_per_kg':
-        return math.ceil(Decimal(str(value)) * weight)
+        raw = Decimal(str(value)) * weight
     elif mode == 'cost_margin':
         margin = Decimal(str(value)) / 100
-        return math.ceil(product.cost_per_kg * (1 + margin) * weight)
+        raw = product.cost_per_kg * (1 + margin) * weight
     elif mode == 'discount':
         discount = Decimal(str(value)) / 100
-        return math.ceil(product.selling_price_per_kg * (1 - discount) * weight)
+        raw = product.selling_price_per_kg * (1 - discount) * weight
     else:
         raise ValueError(f'Invalid price mode: {mode}')
 
+    # Ceiling to nearest whole THB, return as Decimal
+    return Decimal(str(math.ceil(float(raw))))
 
+
+@transaction.atomic
 def adjust_package_price(package, new_price, mode='manual', actor='', value=None):
-    """Adjust a package's selling price with audit trail.
+    """Adjust a package's selling price with atomic audit trail.
+
+    ATOMICITY: Package row is locked with select_for_update(),
+    then both Package.selling_price and PriceChangeHistory are
+    updated inside one transaction. On any failure, both are
+    rolled back.
+
+    AUDIT: Price changes go to PriceChangeHistory, NOT
+    StockMovement. StockMovement is for physical stock operations.
 
     Args:
         package: Package instance
@@ -844,10 +912,17 @@ def adjust_package_price(package, new_price, mode='manual', actor='', value=None
 
     Returns:
         Package: updated package
+
+    Raises:
+        StockError: if price is invalid
     """
     from inventory.models import PriceChangeHistory
     new_price = validate_price(new_price)
+
+    # Lock package row for atomic update
+    package = Package.objects.select_for_update().get(pk=package.pk)
     old_price = package.selling_price
+
     package.selling_price = new_price
     package.save(update_fields=['selling_price', 'updated_at'])
 
