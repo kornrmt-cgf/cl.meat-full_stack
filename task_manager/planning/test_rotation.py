@@ -38,7 +38,7 @@ from planning.services import (
     move_to_display,
     request_refreeze, start_refreeze,
     complete_sale, complete_discard,
-    _get_or_create_cycle, _complete_cycle,
+    _get_or_create_cycle, _complete_cycle, _acquire_capacity_lock,
 )
 from common.state_machine import transition_package, InvalidTransitionError
 
@@ -1232,3 +1232,277 @@ class TestRotationCycleInvariants(TransactionTestCase):
             package=pkg, status='COMPLETED')
         self.assertEqual(completed.count(), 1)
         self.assertEqual(completed.first().outcome, 'REFROZEN')
+
+
+# ============================================================
+# 14. FIRST-USE LOCK RACE (real PostgreSQL)
+# ============================================================
+
+class TestFirstUseLockRace(TransactionTestCase):
+    """
+    Prove that two concurrent first-ever admissions for the same
+    ThawProfile do not raise IntegrityError and produce exactly
+    one CapacityLock row.
+    """
+
+    def _is_pg(self):
+        from django.db import connection
+        return connection.vendor == 'postgresql'
+
+    def test_concurrent_first_use_lock_no_integrity_error(self):
+        """Two threads hit get_or_create simultaneously on fresh profile."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL for row-level locking')
+
+        fp = _create_freeze_profile()
+        tp = _create_thaw_profile(capacity=5)
+
+        # Confirm no lock exists
+        self.assertFalse(CapacityLock.objects.filter(thaw_profile=tp).exists())
+
+        # Two different frozen packages with non-overlapping intervals
+        now = timezone.now()
+        pkg1 = _frozen_pkg()
+        plan1 = create_rotation_plan(pkg1, now + timedelta(days=3), fp, tp)
+        pkg2 = _frozen_pkg()
+        plan2 = create_rotation_plan(pkg2, now + timedelta(days=10), fp, tp)
+
+        results = []
+        errors = []
+
+        def worker(pkg, plan, name):
+            try:
+                add_to_thaw_queue(pkg, plan, actor=name)
+                results.append(name)
+            except Exception as e:
+                errors.append((name, type(e).__name__, str(e)))
+
+        t1 = threading.Thread(target=worker, args=(pkg1, plan1, 'W1'))
+        t2 = threading.Thread(target=worker, args=(pkg2, plan2, 'W2'))
+        t1.start()
+        time.sleep(0.005)
+        t2.start()
+        t1.join(timeout=15)
+        t2.join(timeout=15)
+
+        # Both must succeed (non-overlapping intervals, capacity=5)
+        self.assertEqual(len(results), 2,
+            f'Expected 2 successes, got {len(results)}: {results}')
+        self.assertEqual(len(errors), 0,
+            f'Expected 0 errors, got {errors}')
+
+        # Exactly one CapacityLock row must exist
+        lock_count = CapacityLock.objects.filter(thaw_profile=tp).count()
+        self.assertEqual(lock_count, 1,
+            f'Expected 1 CapacityLock row, got {lock_count}')
+
+    def test_concurrent_first_use_no_duplicate_lock(self):
+        """Rapid concurrent get_or_create must not create duplicate rows."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL')
+
+        fp = _create_freeze_profile()
+        tp = _create_thaw_profile(capacity=10)
+        self.assertFalse(CapacityLock.objects.filter(thaw_profile=tp).exists())
+
+        now = timezone.now()
+        # 5 non-overlapping packages
+        pkgs_plans = []
+        for i in range(5):
+            pkg = _frozen_pkg()
+            plan = create_rotation_plan(
+                pkg, now + timedelta(days=3, hours=i * 25), fp, tp)
+            pkgs_plans.append((pkg, plan))
+
+        results = []
+        errors = []
+        threads = []
+        for i, (pkg, plan) in enumerate(pkgs_plans):
+            t = threading.Thread(
+                target=lambda p, pl, n: (
+                    results.append(n) if add_to_thaw_queue(p, pl, actor=n) is not None
+                    else None
+                ) if not errors.append(None) else None,
+                args=(pkg, plan, f'W{i}'))
+            threads.append(t)
+
+        # Use proper worker function
+        results.clear()
+        errors.clear()
+        threads.clear()
+
+        def worker(pkg, plan, name):
+            try:
+                add_to_thaw_queue(pkg, plan, actor=name)
+                results.append(name)
+            except Exception as e:
+                errors.append((name, type(e).__name__))
+
+        for i, (pkg, plan) in enumerate(pkgs_plans):
+            t = threading.Thread(target=worker, args=(pkg, plan, f'W{i}'))
+            threads.append(t)
+
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=15)
+
+        self.assertEqual(len(errors), 0, f'Unexpected errors: {errors}')
+        lock_count = CapacityLock.objects.filter(thaw_profile=tp).count()
+        self.assertEqual(lock_count, 1,
+            f'Expected exactly 1 CapacityLock, got {lock_count}')
+
+
+# ============================================================
+# 15. CROSS-PROFILE QUEUE CONCURRENCY (real PostgreSQL)
+# ============================================================
+
+class TestCrossProfileQueueConcurrency(TransactionTestCase):
+    """
+    Queue positions are scoped PER PROFILE.
+
+    Profile A and Profile B operate independently.
+    Concurrent admissions to different profiles must not conflict.
+    Positions within each profile must be unique and correctly ordered.
+    """
+
+    def _is_pg(self):
+        from django.db import connection
+        return connection.vendor == 'postgresql'
+
+    def test_cross_profile_positions_independent(self):
+        """Two profiles can have the same queue_position independently."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL')
+
+        fp = _create_freeze_profile()
+        tp_a = _create_thaw_profile(capacity=5)
+        tp_a.name = 'Profile-A'; tp_a.save()
+        tp_b = _create_thaw_profile(capacity=5)
+        tp_b.name = 'Profile-B'; tp_b.save()
+
+        now = timezone.now()
+        pkg1 = _frozen_pkg()
+        plan1 = create_rotation_plan(pkg1, now + timedelta(days=3), fp, tp_a)
+        pkg2 = _frozen_pkg()
+        plan2 = create_rotation_plan(pkg2, now + timedelta(days=3), fp, tp_b)
+
+        results = []
+        errors = []
+
+        def worker(pkg, plan, name):
+            try:
+                add_to_thaw_queue(pkg, plan, actor=name)
+                results.append(name)
+            except Exception as e:
+                errors.append((name, str(e)))
+
+        t1 = threading.Thread(target=worker, args=(pkg1, plan1, 'WA'))
+        t2 = threading.Thread(target=worker, args=(pkg2, plan2, 'WB'))
+        t1.start()
+        time.sleep(0.005)
+        t2.start()
+        t1.join(timeout=15)
+        t2.join(timeout=15)
+
+        self.assertEqual(len(results), 2, f'Both profiles should succeed: {results}')
+        self.assertEqual(len(errors), 0, f'No errors expected: {errors}')
+
+        # Each profile should have position = 1 (first in their scope)
+        e1 = ThawQueueEntry.objects.filter(package=pkg1).first()
+        e2 = ThawQueueEntry.objects.filter(package=pkg2).first()
+        self.assertEqual(e1.queue_position, 1)
+        self.assertEqual(e2.queue_position, 1)
+
+    def test_same_profile_positions_unique(self):
+        """Multiple packages in same profile get unique ascending positions."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL')
+
+        fp = _create_freeze_profile()
+        tp = _create_thaw_profile(capacity=10)
+        now = timezone.now()
+
+        # 4 non-overlapping packages for same profile
+        pkgs_plans = []
+        for i in range(4):
+            pkg = _frozen_pkg()
+            plan = create_rotation_plan(
+                pkg, now + timedelta(days=3, hours=i * 25), fp, tp)
+            pkgs_plans.append((pkg, plan))
+
+        results = []
+        errors = []
+        threads = []
+        for i, (pkg, plan) in enumerate(pkgs_plans):
+            t = threading.Thread(
+                target=lambda p, pl, n: (results.append(n),) or None,
+                args=(pkg, plan, f'W{i}'))
+            threads.append(t)
+
+        # Proper workers
+        results.clear()
+        errors.clear()
+        threads.clear()
+
+        def worker(pkg, plan, name):
+            try:
+                add_to_thaw_queue(pkg, plan, actor=name)
+                results.append(name)
+            except Exception as e:
+                errors.append((name, str(e)))
+
+        for i, (pkg, plan) in enumerate(pkgs_plans):
+            t = threading.Thread(target=worker, args=(pkg, plan, f'W{i}'))
+            threads.append(t)
+
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=15)
+
+        self.assertEqual(len(results), 4, f'All 4 should succeed: {results}')
+
+        # Positions must be unique within this profile
+        positions = list(
+            ThawQueueEntry.objects.filter(
+                rotation_plan__thaw_profile=tp,
+                status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START]
+            ).values_list('queue_position', flat=True)
+        )
+        self.assertEqual(len(positions), len(set(positions)),
+            f'Duplicate positions in same profile: {positions}')
+        self.assertEqual(sorted(positions), [1, 2, 3, 4])
+
+    def test_cancellation_recalculates_within_profile(self):
+        """Cancelling an entry recalculates positions within its profile only."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL')
+
+        fp = _create_freeze_profile()
+        tp = _create_thaw_profile(capacity=5)
+        now = timezone.now()
+
+        p1 = _frozen_pkg()
+        p2 = _frozen_pkg()
+        p3 = _frozen_pkg()
+        plan1 = create_rotation_plan(p1, now + timedelta(days=3), fp, tp)
+        plan2 = create_rotation_plan(p2, now + timedelta(days=4), fp, tp)
+        plan3 = create_rotation_plan(p3, now + timedelta(days=5), fp, tp)
+
+        e1 = add_to_thaw_queue(p1, plan1, actor='test')
+        e2 = add_to_thaw_queue(p2, plan2, actor='test')
+        e3 = add_to_thaw_queue(p3, plan3, actor='test')
+
+        self.assertEqual(e1.queue_position, 1)
+        self.assertEqual(e2.queue_position, 2)
+        self.assertEqual(e3.queue_position, 3)
+
+        # Cancel middle entry
+        remove_from_thaw_queue(e2, actor='test')
+
+        # Remaining positions should be 1, 2 (renumbered)
+        e1.refresh_from_db()
+        e3.refresh_from_db()
+        self.assertEqual(e1.queue_position, 1)
+        self.assertEqual(e3.queue_position, 2)

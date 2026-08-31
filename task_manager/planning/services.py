@@ -25,7 +25,7 @@ LIFECYCLE
 Cancellation:
   THAW_QUEUED → remove_from_thaw_queue → PACKED
 """
-from django.db import transaction
+from django.db import transaction, IntegrityError
 from django.db.models import Max
 from django.utils import timezone
 from datetime import timedelta
@@ -216,8 +216,7 @@ def add_to_thaw_queue(package, rotation_plan, actor=''):
     profile = rotation_plan.thaw_profile
 
     # ── STEP 1: Acquire capacity lock (serializes all admissions for this profile) ──
-    lock, _ = CapacityLock.objects.get_or_create(thaw_profile=profile)
-    lock = CapacityLock.objects.select_for_update().get(pk=lock.pk)
+    lock = _acquire_capacity_lock(profile)
 
     # ── STEP 2: Re-check interval overlaps INSIDE the lock ──
     #  This is now safe — no other thread can pass this point until we commit/rollback.
@@ -234,8 +233,12 @@ def add_to_thaw_queue(package, rotation_plan, actor=''):
     if can_transition(package.current_state, 'READY_FOR_THAW'):
         transition_package(package, 'READY_FOR_THAW', actor=actor)
 
-    # ── STEP 4: Queue position (safe — serialized by capacity lock) ──
+    # ── STEP 4: Queue position (PER PROFILE scope — serialized by capacity lock) ──
+    #  Business rule: queue_position is scoped per ThawProfile.
+    #  Each profile represents a distinct thaw resource (room/capacity pool).
+    #  Positions are unique within one profile's queue.
     max_pos = ThawQueueEntry.objects.filter(
+        rotation_plan__thaw_profile=profile,
         status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START]
     ).aggregate(Max('queue_position'))['queue_position__max'] or 0
 
@@ -292,27 +295,76 @@ def remove_from_thaw_queue(entry, actor='', reason=''):
     transition_package(package, 'PACKED', actor=actor,
                       reason=reason or 'Cancelled from thaw queue')
 
-    # Step 3: Recalculate active queue positions
-    _recalculate_queue_positions()
+    # Step 3: Recalculate active queue positions (scoped to this entry's profile)
+    profile = entry.rotation_plan.thaw_profile
+    _recalculate_queue_positions(profile=profile)
 
     return entry
 
 
-def _recalculate_queue_positions():
+def _acquire_capacity_lock(profile):
+    """
+    Concurrency-safe CapacityLock acquisition.
+
+    The first-ever admission for a ThawProfile must create the lock row.
+    Two concurrent first-use requests must not raise an unhandled
+    IntegrityError.  The retry loop handles this:
+
+      1. try get_or_create
+      2. if IntegrityError → another thread won the race → re-fetch
+      3. SELECT FOR UPDATE on the (now-existing) row
+
+    The final lock row is always the same single row per profile.
+    """
+    try:
+        lock, _ = CapacityLock.objects.get_or_create(thaw_profile=profile)
+    except IntegrityError:
+        # Another thread created the row between our check and insert.
+        # Re-fetch — the row now exists.
+        transaction.savepoint_rollback(None)
+        lock = CapacityLock.objects.get(thaw_profile=profile)
+
+    # Acquire row-level lock (serializes all concurrent admissions)
+    lock = CapacityLock.objects.select_for_update().get(pk=lock.pk)
+    return lock
+
+
+def _recalculate_queue_positions(profile=None):
     """
     Recalculate queue positions for active entries.
 
-    Positions are assigned sequentially by planned_start_at.
-    Cancelled/completed entries are excluded.
-    """
-    active_entries = ThawQueueEntry.objects.filter(
-        status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START]
-    ).order_by('planned_start_at')
+    Scope: PER PROFILE (business rule — each ThawProfile is a distinct
+    thaw resource with its own queue ordering).
 
-    for idx, entry in enumerate(active_entries, start=1):
-        if entry.queue_position != idx:
-            entry.queue_position = idx
-            entry.save(update_fields=['queue_position'])
+    Positions are assigned sequentially by planned_start_at within each
+    profile.  Cancelled/completed entries are excluded.
+
+    Args:
+        profile: If provided, recalculate only for this profile.
+                 If None, recalculate all profiles (used during cancellation
+                 which already runs under the capacity lock for the entry's profile).
+    """
+    if profile is not None:
+        active_entries = ThawQueueEntry.objects.filter(
+            rotation_plan__thaw_profile=profile,
+            status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START]
+        ).order_by('planned_start_at')
+
+        for idx, entry in enumerate(active_entries, start=1):
+            if entry.queue_position != idx:
+                entry.queue_position = idx
+                entry.save(update_fields=['queue_position'])
+    else:
+        # Recalculate all profiles — group by profile, recalculate each
+        from django.db.models import Q
+        profiles_with_active = (
+            ThawQueueEntry.objects.filter(
+                status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START]
+            ).values_list('rotation_plan__thaw_profile_id', flat=True).distinct()
+        )
+        for pid in profiles_with_active:
+            profile_obj = ThawProfile.objects.get(pk=pid)
+            _recalculate_queue_positions(profile=profile_obj)
 
 
 # ── Cancel ──
@@ -344,7 +396,9 @@ def _cancel_queue_entries_for_plan(plan, actor='', reason=''):
                           reason=reason or 'Plan cancelled')
 
     if active_entries:
-        _recalculate_queue_positions()
+        # Recalculate positions for the plan's profile
+        profile = plan.thaw_profile
+        _recalculate_queue_positions(profile=profile)
 
 
 @transaction.atomic
