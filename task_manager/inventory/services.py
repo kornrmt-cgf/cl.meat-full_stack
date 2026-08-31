@@ -63,9 +63,8 @@ CONCURRENCY
 - Price changes use transaction.atomic + row lock
 - All service functions use @transaction.atomic
 """
-import math
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_HALF_UP
 
 from django.db import transaction
 from django.utils import timezone
@@ -305,10 +304,15 @@ def create_package(product, batch, *args, **kwargs):
         StockError: if barcode already exists or other validation fails
     """
     # --- detect legacy positional call: create_package(product, batch, weight) ---
+    # Also supports: create_package(product, batch, weight, storage_location)
     if len(args) >= 1 and 'barcode' not in kwargs:
         # Legacy: third positional arg is weight
         weight_arg = args[0]
-        storage_location = kwargs.pop('storage_location', None)
+        # Check if 4th positional arg is a StorageLocation
+        if len(args) >= 2 and hasattr(args[1], 'pk'):
+            storage_location = args[1]
+        else:
+            storage_location = kwargs.pop('storage_location', None)
         barcode = generate_barcode(product, batch)
         weight = validate_weight(weight_arg)
         selling_price = calculate_package_price(product, weight)
@@ -887,8 +891,8 @@ def calculate_package_price(product, weight, mode='auto', value=None):
     else:
         raise ValueError(f'Invalid price mode: {mode}')
 
-    # Ceiling to nearest whole THB, return as Decimal
-    return Decimal(str(math.ceil(float(raw))))
+    # Ceiling to nearest whole THB using pure Decimal arithmetic
+    return raw.quantize(Decimal('1'), rounding=ROUND_CEILING)
 
 
 @transaction.atomic
