@@ -263,11 +263,10 @@ def remove_from_thaw_queue(entry, actor='', reason=''):
     """
     Cancel a thaw queue entry and transition the package back to PACKED.
 
-    All steps happen in one transaction:
-    1. Mark queue entry CANCELLED
-    2. Transition package THAW_QUEUED → PACKED
-    3. Recalculate active queue positions
+    Serializes through the same CapacityLock as add_to_thaw_queue:
+        lock → validate → cancel → transition → recalculate → commit
 
+    All steps happen in one transaction.
     If any step fails, the entire operation rolls back.
 
     Raises:
@@ -287,6 +286,17 @@ def remove_from_thaw_queue(entry, actor='', reason=''):
             f"Package state is {package.current_state}, expected THAW_QUEUED"
         )
 
+    # ── Acquire capacity lock (serializes add vs cancel for this profile) ──
+    profile = entry.rotation_plan.thaw_profile
+    _acquire_capacity_lock(profile)
+
+    # Re-read entry under lock — a concurrent mutation may have changed it
+    entry.refresh_from_db()
+    if entry.status not in [QueueStatus.QUEUED, QueueStatus.READY_TO_START]:
+        raise ValueError(
+            f"Cannot cancel queue entry: status changed to {entry.status}"
+        )
+
     # Step 1: Mark queue entry CANCELLED
     entry.status = QueueStatus.CANCELLED
     entry.save(update_fields=['status', 'updated_at'])
@@ -295,8 +305,7 @@ def remove_from_thaw_queue(entry, actor='', reason=''):
     transition_package(package, 'PACKED', actor=actor,
                       reason=reason or 'Cancelled from thaw queue')
 
-    # Step 3: Recalculate active queue positions (scoped to this entry's profile)
-    profile = entry.rotation_plan.thaw_profile
+    # Step 3: Recalculate active queue positions (scoped to profile)
     _recalculate_queue_positions(profile=profile)
 
     return entry
@@ -308,23 +317,28 @@ def _acquire_capacity_lock(profile):
 
     The first-ever admission for a ThawProfile must create the lock row.
     Two concurrent first-use requests must not raise an unhandled
-    IntegrityError.  The retry loop handles this:
+    IntegrityError.  The approach:
 
-      1. try get_or_create
-      2. if IntegrityError → another thread won the race → re-fetch
-      3. SELECT FOR UPDATE on the (now-existing) row
+      1. Create an explicit savepoint before get_or_create
+      2. On IntegrityError → rollback to savepoint (recovers connection)
+      3. Re-fetch the existing row
+      4. SELECT FOR UPDATE on the (now-existing) row
 
     The final lock row is always the same single row per profile.
+    PostgreSQL re-entrant SELECT FOR UPDATE on the same row in the
+    same transaction succeeds immediately — safe for nested callers.
     """
+    sid = transaction.savepoint()
     try:
         lock, _ = CapacityLock.objects.get_or_create(thaw_profile=profile)
     except IntegrityError:
-        # Another thread created the row between our check and insert.
-        # Re-fetch — the row now exists.
-        transaction.savepoint_rollback(None)
+        # Another thread won the creation race.
+        # Rollback to our savepoint to recover the connection from
+        # NEEDS_ROLLBACK state, then re-fetch the existing row.
+        transaction.savepoint_rollback(sid)
         lock = CapacityLock.objects.get(thaw_profile=profile)
 
-    # Acquire row-level lock (serializes all concurrent admissions)
+    # Acquire row-level lock (serializes all concurrent queue mutations)
     lock = CapacityLock.objects.select_for_update().get(pk=lock.pk)
     return lock
 
@@ -374,9 +388,16 @@ def _cancel_queue_entries_for_plan(plan, actor='', reason=''):
     Cancel all active queue entries for a plan WITHOUT its own transaction.
 
     Must be called within an existing transaction.atomic block.
+    Acquires the CapacityLock for the plan's profile to serialize
+    against concurrent add_to_thaw_queue() calls.
     If any entry fails to cancel, the entire outer transaction rolls back.
     """
     from common.state_machine import transition_package
+
+    profile = plan.thaw_profile
+
+    # ── Acquire capacity lock (serializes against concurrent add/cancel) ──
+    _acquire_capacity_lock(profile)
 
     active_entries = list(ThawQueueEntry.objects.filter(
         rotation_plan=plan,
@@ -396,8 +417,6 @@ def _cancel_queue_entries_for_plan(plan, actor='', reason=''):
                           reason=reason or 'Plan cancelled')
 
     if active_entries:
-        # Recalculate positions for the plan's profile
-        profile = plan.thaw_profile
         _recalculate_queue_positions(profile=profile)
 
 

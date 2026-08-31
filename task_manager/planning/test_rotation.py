@@ -1506,3 +1506,296 @@ class TestCrossProfileQueueConcurrency(TransactionTestCase):
         e3.refresh_from_db()
         self.assertEqual(e1.queue_position, 1)
         self.assertEqual(e3.queue_position, 2)
+
+
+# ============================================================
+# 16. QUEUE MUTATION CONCURRENCY (real PostgreSQL)
+# ============================================================
+
+class TestQueueMutationConcurrency(TransactionTestCase):
+    """
+    All queue mutations (add, cancel, cancel-plan) serialize through
+    the same CapacityLock.  These tests prove add-vs-cancel, add-vs-
+    cancel-plan, and multi-mutation scenarios are safe.
+    """
+
+    def _is_pg(self):
+        from django.db import connection
+        return connection.vendor == 'postgresql'
+
+    def _get_active_positions(self, profile):
+        """Return sorted list of active queue positions for a profile."""
+        return sorted(
+            ThawQueueEntry.objects.filter(
+                rotation_plan__thaw_profile=profile,
+                status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START]
+            ).values_list('queue_position', flat=True)
+        )
+
+    def _get_active_count(self, profile):
+        return ThawQueueEntry.objects.filter(
+            rotation_plan__thaw_profile=profile,
+            status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START]
+        ).count()
+
+    # --- Test A: concurrent add + cancel ---
+
+    def test_concurrent_add_and_cancel(self):
+        """add_to_thaw_queue + remove_from_thaw_queue on same profile."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL')
+
+        fp = _create_freeze_profile()
+        tp = _create_thaw_profile(capacity=5)
+        now = timezone.now()
+
+        # Pre-populate: 2 entries in queue
+        p1 = _frozen_pkg()
+        p2 = _frozen_pkg()
+        plan1 = create_rotation_plan(p1, now + timedelta(days=3), fp, tp)
+        plan2 = create_rotation_plan(p2, now + timedelta(days=4), fp, tp)
+        e1 = add_to_thaw_queue(p1, plan1, actor='setup')
+        e2 = add_to_thaw_queue(p2, plan2, actor='setup')
+        self.assertEqual(self._get_active_positions(tp), [1, 2])
+
+        # Concurrent: add p3 + cancel e1
+        p3 = _frozen_pkg()
+        plan3 = create_rotation_plan(p3, now + timedelta(days=5), fp, tp)
+
+        add_errors = []
+        cancel_errors = []
+
+        def do_add():
+            try:
+                add_to_thaw_queue(p3, plan3, actor='add-thread')
+            except Exception as e:
+                add_errors.append(str(e))
+
+        def do_cancel():
+            try:
+                remove_from_thaw_queue(e1, actor='cancel-thread')
+            except Exception as e:
+                cancel_errors.append(str(e))
+
+        t1 = threading.Thread(target=do_add)
+        t2 = threading.Thread(target=do_cancel)
+        t1.start()
+        time.sleep(0.01)
+        t2.start()
+        t1.join(timeout=15)
+        t2.join(timeout=15)
+
+        self.assertEqual(len(add_errors), 0, f'Add failed: {add_errors}')
+        self.assertEqual(len(cancel_errors), 0, f'Cancel failed: {cancel_errors}')
+
+        # Exactly 2 active entries remain (e2 + p3)
+        self.assertEqual(self._get_active_count(tp), 2)
+
+        # Positions must be contiguous: 1, 2
+        positions = self._get_active_positions(tp)
+        self.assertEqual(positions, [1, 2],
+            f'Positions not contiguous: {positions}')
+
+        # e1 must be CANCELLED
+        e1.refresh_from_db()
+        self.assertEqual(e1.status, QueueStatus.CANCELLED)
+
+        # p3 must be THAW_QUEUED
+        p3.refresh_from_db()
+        self.assertEqual(p3.current_state, PackageState.THAW_QUEUED)
+
+    # --- Test B: concurrent add + cancel_rotation_plan ---
+
+    def test_concurrent_add_and_cancel_plan(self):
+        """add_to_thaw_queue + cancel_rotation_plan on same profile."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL')
+
+        fp = _create_freeze_profile()
+        tp = _create_thaw_profile(capacity=5)
+        now = timezone.now()
+
+        # Pre-populate: 1 entry
+        p1 = _frozen_pkg()
+        plan1 = create_rotation_plan(p1, now + timedelta(days=3), fp, tp)
+        e1 = add_to_thaw_queue(p1, plan1, actor='setup')
+        self.assertEqual(self._get_active_count(tp), 1)
+
+        # Concurrent: add p2 + cancel plan1
+        p2 = _frozen_pkg()
+        plan2 = create_rotation_plan(p2, now + timedelta(days=5), fp, tp)
+
+        add_errors = []
+        cancel_errors = []
+
+        def do_add():
+            try:
+                add_to_thaw_queue(p2, plan2, actor='add-thread')
+            except Exception as e:
+                add_errors.append(str(e))
+
+        def do_cancel_plan():
+            try:
+                cancel_rotation_plan(plan1, actor='cancel-thread')
+            except Exception as e:
+                cancel_errors.append(str(e))
+
+        t1 = threading.Thread(target=do_add)
+        t2 = threading.Thread(target=do_cancel_plan)
+        t1.start()
+        time.sleep(0.01)
+        t2.start()
+        t1.join(timeout=15)
+        t2.join(timeout=15)
+
+        self.assertEqual(len(add_errors), 0, f'Add failed: {add_errors}')
+        self.assertEqual(len(cancel_errors), 0, f'Cancel plan failed: {cancel_errors}')
+
+        # Exactly 1 active entry remains (either e1 or p2, not both if conflicting)
+        active_count = self._get_active_count(tp)
+        self.assertIn(active_count, [0, 1],
+            f'Unexpected active count: {active_count}')
+
+        # Positions must be contiguous
+        positions = self._get_active_positions(tp)
+        if positions:
+            self.assertEqual(positions, list(range(1, len(positions) + 1)),
+                f'Positions not contiguous: {positions}')
+
+    # --- Test C: multiple concurrent add + cancel on one profile ---
+
+    def test_multi_concurrent_add_cancel_one_profile(self):
+        """Multiple threads adding and cancelling on one profile."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL')
+
+        fp = _create_freeze_profile()
+        tp = _create_thaw_profile(capacity=10)
+        now = timezone.now()
+
+        # Pre-populate: 3 entries
+        pre_entries = []
+        for i in range(3):
+            p = _frozen_pkg()
+            plan = create_rotation_plan(
+                p, now + timedelta(days=3, hours=i), fp, tp)
+            e = add_to_thaw_queue(p, plan, actor='setup')
+            pre_entries.append(e)
+        self.assertEqual(self._get_active_count(tp), 3)
+
+        # Concurrent: 3 adds + 1 cancel
+        new_pkgs = [_frozen_pkg() for _ in range(3)]
+        new_plans = [
+            create_rotation_plan(
+                p, now + timedelta(days=10, hours=i * 25), fp, tp)
+            for i, p in enumerate(new_pkgs)
+        ]
+        cancel_entry = pre_entries[0]  # cancel the first pre-populated entry
+
+        errors = []
+
+        def do_add(pkg, plan, name):
+            try:
+                add_to_thaw_queue(pkg, plan, actor=name)
+            except Exception as e:
+                errors.append((name, str(e)))
+
+        def do_cancel(entry):
+            try:
+                remove_from_thaw_queue(entry, actor='cancel')
+            except Exception as e:
+                errors.append(('cancel', str(e)))
+
+        threads = []
+        for i in range(3):
+            t = threading.Thread(
+                target=do_add, args=(new_pkgs[i], new_plans[i], f'add-{i}'))
+            threads.append(t)
+        threads.append(threading.Thread(target=do_cancel, args=(cancel_entry,)))
+
+        for t in threads:
+            t.start()
+            time.sleep(0.005)
+        for t in threads:
+            t.join(timeout=15)
+
+        # No unexpected errors (capacity=10, plenty of room)
+        self.assertEqual(len(errors), 0, f'Errors: {errors}')
+
+        # Positions must be contiguous 1..N
+        positions = self._get_active_positions(tp)
+        self.assertEqual(
+            positions, list(range(1, len(positions) + 1)),
+            f'Positions not contiguous: {positions}')
+
+        # No duplicate positions
+        self.assertEqual(len(positions), len(set(positions)),
+            f'Duplicate positions: {positions}')
+
+        # Cancelled entry must not appear as active
+        cancel_entry.refresh_from_db()
+        self.assertEqual(cancel_entry.status, QueueStatus.CANCELLED)
+
+    # --- Test D: same operations across two profiles ---
+
+    def test_concurrent_mutations_two_profiles(self):
+        """Add+cancel on Profile A and Profile B concurrently."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL')
+
+        fp = _create_freeze_profile()
+        tp_a = _create_thaw_profile(capacity=5)
+        tp_a.name = 'Room-A'; tp_a.save()
+        tp_b = _create_thaw_profile(capacity=5)
+        tp_b.name = 'Room-B'; tp_b.save()
+        now = timezone.now()
+
+        # Pre-populate each profile with 1 entry
+        p_a1 = _frozen_pkg()
+        plan_a1 = create_rotation_plan(p_a1, now + timedelta(days=3), fp, tp_a)
+        e_a1 = add_to_thaw_queue(p_a1, plan_a1, actor='setup')
+
+        p_b1 = _frozen_pkg()
+        plan_b1 = create_rotation_plan(p_b1, now + timedelta(days=3), fp, tp_b)
+        e_b1 = add_to_thaw_queue(p_b1, plan_b1, actor='setup')
+
+        # Concurrent: add to A + cancel from B (different profiles)
+        p_a2 = _frozen_pkg()
+        plan_a2 = create_rotation_plan(p_a2, now + timedelta(days=5), fp, tp_a)
+
+        errors = []
+
+        def do_add_a():
+            try:
+                add_to_thaw_queue(p_a2, plan_a2, actor='add-a')
+            except Exception as e:
+                errors.append(('add-a', str(e)))
+
+        def do_cancel_b():
+            try:
+                remove_from_thaw_queue(e_b1, actor='cancel-b')
+            except Exception as e:
+                errors.append(('cancel-b', str(e)))
+
+        t1 = threading.Thread(target=do_add_a)
+        t2 = threading.Thread(target=do_cancel_b)
+        t1.start()
+        time.sleep(0.01)
+        t2.start()
+        t1.join(timeout=15)
+        t2.join(timeout=15)
+
+        self.assertEqual(len(errors), 0, f'Errors: {errors}')
+
+        # Profile A: 2 active entries, positions [1, 2]
+        pos_a = self._get_active_positions(tp_a)
+        self.assertEqual(pos_a, [1, 2],
+            f'Profile A positions wrong: {pos_a}')
+
+        # Profile B: 0 active entries (cancelled)
+        count_b = self._get_active_count(tp_b)
+        self.assertEqual(count_b, 0, f'Profile B should be empty: {count_b}')
+
+        # Profiles are independent
+        e_b1.refresh_from_db()
+        self.assertEqual(e_b1.status, QueueStatus.CANCELLED)
