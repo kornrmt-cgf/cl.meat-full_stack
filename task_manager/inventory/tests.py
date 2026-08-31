@@ -597,14 +597,17 @@ class WorkerTaskCompletionTest(InventoryBaseTestCase):
         pkg.refresh_from_db()
         self.assertEqual(pkg.current_state, 'FREEZING')
 
-    def test_complete_already_completed_raises(self):
+    def test_complete_already_completed_is_idempotent(self):
+        """Completing an already-completed task is idempotent (no error, no re-execution)."""
         pkg = create_package(self.product, self.batch, 1.0)
         future = timezone.now() + timedelta(days=3)
         plan = create_rotation_plan(pkg, future, self.freeze_profile, self.thaw_profile)
         freeze_task = plan.worker_tasks.filter(task_type='FREEZE_START').first()
-        complete_task(freeze_task, actor=self.user)
-        with self.assertRaises(ValueError):
-            complete_task(freeze_task, actor=self.user)
+        result1 = complete_task(freeze_task, actor=self.user)
+        # Second complete should be idempotent — no error, no re-execution
+        result2 = complete_task(freeze_task, actor=self.user)
+        self.assertEqual(result2['task'].status, TaskStatus.COMPLETED)
+        self.assertEqual(result2['transitions'], [])
 
     def test_complete_with_string_actor(self):
         """complete_task should handle string actor (for backward compat)."""

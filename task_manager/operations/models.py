@@ -32,8 +32,14 @@ class TaskType(models.TextChoices):
 # ============================================================
 
 class TaskStatus(models.TextChoices):
-    """Status choices for WorkerTask."""
+    """Status choices for WorkerTask.
+
+    Lifecycle: PENDING -> CLAIMED -> IN_PROGRESS -> COMPLETED
+    Cancellation: PENDING / CLAIMED / IN_PROGRESS -> CANCELLED
+    Stale: PENDING / CLAIMED / IN_PROGRESS -> SKIPPED
+    """
     PENDING = 'PENDING'
+    CLAIMED = 'CLAIMED'
     IN_PROGRESS = 'IN_PROGRESS'
     COMPLETED = 'COMPLETED'
     SKIPPED = 'SKIPPED'
@@ -63,11 +69,18 @@ class WorkerTask(models.Model):
     status = models.CharField(
         max_length=20, choices=TaskStatus.choices, default=TaskStatus.PENDING
     )
+    claimed_by = models.ForeignKey(
+        'accounts.User', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='operation_claimed_tasks'
+    )
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     completed_by = models.ForeignKey(
         'accounts.User', null=True, blank=True,
         on_delete=models.SET_NULL, related_name='worker_tasks'
     )
+    cancelled_at = models.DateTimeField(null=True, blank=True)
     notes = models.TextField(blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

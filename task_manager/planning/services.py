@@ -459,10 +459,9 @@ def cancel_rotation_plan(plan, actor='', reason=''):
     plan.status = PlanStatus.CANCELLED
     plan.save(update_fields=['status', 'updated_at'])
 
-    # Cancel pending/in-progress worker tasks
-    plan.worker_tasks.filter(
-        status__in=[TaskStatus.PENDING, TaskStatus.IN_PROGRESS]
-    ).update(status=TaskStatus.CANCELLED)
+    # Cancel pending/claimed/in-progress worker tasks via service
+    from operations.services import cancel_tasks_for_plan
+    cancel_tasks_for_plan(plan, actor=actor, reason=reason or 'Plan cancelled')
 
     # Cancel active queue entries — all-or-nothing within this transaction
     _cancel_queue_entries_for_plan(plan, actor=actor,
