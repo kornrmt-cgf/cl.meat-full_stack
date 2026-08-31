@@ -39,6 +39,7 @@ from planning.services import (
     request_refreeze, start_refreeze,
     complete_sale, complete_discard,
     _get_or_create_cycle, _complete_cycle, _acquire_capacity_lock,
+    _recalculate_queue_positions,
 )
 from common.state_machine import transition_package, InvalidTransitionError
 
@@ -1799,3 +1800,185 @@ class TestQueueMutationConcurrency(TransactionTestCase):
         # Profiles are independent
         e_b1.refresh_from_db()
         self.assertEqual(e_b1.status, QueueStatus.CANCELLED)
+
+
+# ============================================================
+# 17. QUEUE ORDERING DETERMINISM (real PostgreSQL)
+# ============================================================
+
+class TestQueueOrderingDeterminism(TransactionTestCase):
+    """
+    Queue ordering uses (planned_start_at, created_at, pk) as a stable
+    tiebreaker.  These tests prove that tied timestamps produce
+    deterministic, reproducible ordering.
+    """
+
+    def _is_pg(self):
+        from django.db import connection
+        return connection.vendor == 'postgresql'
+
+    def _get_active_entries(self, profile):
+        """Return active entries ordered by queue_position."""
+        return list(
+            ThawQueueEntry.objects.filter(
+                rotation_plan__thaw_profile=profile,
+                status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START]
+            ).order_by('queue_position')
+        )
+
+    # --- Case A: two entries with identical planned_start_at ---
+
+    def test_same_time_deterministic_order(self):
+        """Two entries with identical planned_start_at get stable positions."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL')
+
+        fp = _create_freeze_profile()
+        tp = _create_thaw_profile(capacity=5)
+        now = timezone.now()
+        target = now + timedelta(days=3)
+
+        p1 = _frozen_pkg()
+        p2 = _frozen_pkg()
+        plan1 = create_rotation_plan(p1, target, fp, tp)
+        plan2 = create_rotation_plan(p2, target, fp, tp)
+
+        # Both have the same target → same planned_thaw_start_at
+        e1 = add_to_thaw_queue(p1, plan1, actor='test')
+        e2 = add_to_thaw_queue(p2, plan2, actor='test')
+
+        entries = self._get_active_entries(tp)
+        self.assertEqual(len(entries), 2)
+
+        # Positions must be 1, 2 (deterministic)
+        self.assertEqual(entries[0].queue_position, 1)
+        self.assertEqual(entries[1].queue_position, 2)
+
+        # Record the logical order (by pk since created_at may also tie)
+        first_pk = entries[0].pk
+        second_pk = entries[1].pk
+
+        # Recalculate — order must not change
+        _recalculate_queue_positions(profile=tp)
+        entries2 = self._get_active_entries(tp)
+        self.assertEqual(entries2[0].pk, first_pk)
+        self.assertEqual(entries2[1].pk, second_pk)
+
+    # --- Case B: three entries with ties ---
+
+    def test_three_entries_ties_stable(self):
+        """A=10:00, B=10:00, C=11:00 → stable order across recalculations."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL')
+
+        fp = _create_freeze_profile()
+        tp = _create_thaw_profile(capacity=5)
+        now = timezone.now()
+
+        target_same = now + timedelta(days=3)
+        target_later = now + timedelta(days=4)
+
+        pA = _frozen_pkg()
+        pB = _frozen_pkg()
+        pC = _frozen_pkg()
+        planA = create_rotation_plan(pA, target_same, fp, tp)
+        planB = create_rotation_plan(pB, target_same, fp, tp)
+        planC = create_rotation_plan(pC, target_later, fp, tp)
+
+        eA = add_to_thaw_queue(pA, planA, actor='test')
+        eB = add_to_thaw_queue(pB, planB, actor='test')
+        eC = add_to_thaw_queue(pC, planC, actor='test')
+
+        entries = self._get_active_entries(tp)
+        self.assertEqual(len(entries), 3)
+
+        # Record initial order
+        order_before = [e.pk for e in entries]
+
+        # A and B should be first two (same earlier time), C third
+        self.assertIn(entries[0].pk, [eA.pk, eB.pk])
+        self.assertIn(entries[1].pk, [eA.pk, eB.pk])
+        self.assertEqual(entries[2].pk, eC.pk)
+
+        # Recalculate 5 times — order must remain identical
+        for _ in range(5):
+            _recalculate_queue_positions(profile=tp)
+            entries_n = self._get_active_entries(tp)
+            order_n = [e.pk for e in entries_n]
+            self.assertEqual(order_n, order_before,
+                f'Order changed after recalculation: {order_before} → {order_n}')
+
+    # --- Case C: cancel one of two same-time entries ---
+
+    def test_cancel_same_time_entry_preserves_order(self):
+        """Cancelling one of two same-time entries preserves stable ordering."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL')
+
+        fp = _create_freeze_profile()
+        tp = _create_thaw_profile(capacity=5)
+        now = timezone.now()
+        target = now + timedelta(days=3)
+
+        p1 = _frozen_pkg()
+        p2 = _frozen_pkg()
+        plan1 = create_rotation_plan(p1, target, fp, tp)
+        plan2 = create_rotation_plan(p2, target, fp, tp)
+
+        e1 = add_to_thaw_queue(p1, plan1, actor='test')
+        e2 = add_to_thaw_queue(p2, plan2, actor='test')
+
+        entries_before = self._get_active_entries(tp)
+        self.assertEqual(len(entries_before), 2)
+
+        # The first entry in stable order
+        first_pk = entries_before[0].pk
+        second_pk = entries_before[1].pk
+
+        # Cancel the first entry
+        first_entry = entries_before[0]
+        remove_from_thaw_queue(first_entry, actor='test')
+
+        entries_after = self._get_active_entries(tp)
+        self.assertEqual(len(entries_after), 1)
+        self.assertEqual(entries_after[0].pk, second_pk)
+        self.assertEqual(entries_after[0].queue_position, 1)
+
+    # --- Case D: repeated recalculation without data changes ---
+
+    def test_idempotent_recalculation(self):
+        """Recalculating positions without data changes produces identical result."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL')
+
+        fp = _create_freeze_profile()
+        tp = _create_thaw_profile(capacity=10)
+        now = timezone.now()
+
+        # Create 5 entries with some same-time ties
+        pkgs = []
+        entries = []
+        for i in range(5):
+            p = _frozen_pkg()
+            # First 3 share the same target (tie), last 2 are unique
+            if i < 3:
+                target = now + timedelta(days=3)
+            else:
+                target = now + timedelta(days=3, hours=i * 10)
+            plan = create_rotation_plan(p, target, fp, tp)
+            e = add_to_thaw_queue(p, plan, actor='test')
+            pkgs.append(p)
+            entries.append(e)
+
+        # Record stable order
+        initial = self._get_active_entries(tp)
+        initial_order = [(e.pk, e.queue_position) for e in initial]
+
+        # Recalculate 10 times
+        for i in range(10):
+            _recalculate_queue_positions(profile=tp)
+            current = self._get_active_entries(tp)
+            current_order = [(e.pk, e.queue_position) for e in current]
+            self.assertEqual(
+                current_order, initial_order,
+                f'Order changed on iteration {i}: {initial_order} → {current_order}')

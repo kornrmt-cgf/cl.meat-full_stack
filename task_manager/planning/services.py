@@ -36,6 +36,11 @@ from planning.models import (
 )
 from inventory.models import Package, PackageState
 
+# ── Stable queue ordering rule ──
+# Used by: add_to_thaw_queue, _recalculate_queue_positions, queue listing.
+# Guarantees deterministic order even when planned_start_at is identical.
+QUEUE_ORDERING = ['planned_start_at', 'created_at', 'pk']
+
 
 # ── Duration calculation (AUTO mode) ──
 
@@ -362,7 +367,7 @@ def _recalculate_queue_positions(profile=None):
         active_entries = ThawQueueEntry.objects.filter(
             rotation_plan__thaw_profile=profile,
             status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START]
-        ).order_by('planned_start_at')
+        ).order_by(*QUEUE_ORDERING)
 
         for idx, entry in enumerate(active_entries, start=1):
             if entry.queue_position != idx:
