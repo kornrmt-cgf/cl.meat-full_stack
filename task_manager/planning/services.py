@@ -270,8 +270,9 @@ def remove_from_thaw_queue(entry, actor='', reason=''):
     """
     Cancel a thaw queue entry and transition the package back to PACKED.
 
-    Serializes through the same CapacityLock as add_to_thaw_queue:
-        lock → validate → cancel → transition → recalculate → commit
+    Lock order (globally consistent with add_to_thaw_queue):
+        1. Package row (SELECT FOR UPDATE)
+        2. CapacityLock (SELECT FOR UPDATE)
 
     All steps happen in one transaction.
     If any step fails, the entire operation rolls back.
@@ -287,32 +288,35 @@ def remove_from_thaw_queue(entry, actor='', reason=''):
             f"Cannot cancel queue entry: status is {entry.status}"
         )
 
-    package = entry.package
+    profile = entry.rotation_plan.thaw_profile
+
+    # ── STEP 1: Lock Package row (same order as add_to_thaw_queue) ──
+    package = Package.objects.select_for_update().get(pk=entry.package_id)
+
     if package.current_state != PackageState.THAW_QUEUED:
         raise ValueError(
             f"Package state is {package.current_state}, expected THAW_QUEUED"
         )
 
-    # ── Acquire capacity lock (serializes add vs cancel for this profile) ──
-    profile = entry.rotation_plan.thaw_profile
+    # ── STEP 2: Acquire CapacityLock (after Package lock) ──
     _acquire_capacity_lock(profile)
 
-    # Re-read entry under lock — a concurrent mutation may have changed it
+    # ── STEP 3: Re-read entry under both locks ──
     entry.refresh_from_db()
     if entry.status not in [QueueStatus.QUEUED, QueueStatus.READY_TO_START]:
         raise ValueError(
             f"Cannot cancel queue entry: status changed to {entry.status}"
         )
 
-    # Step 1: Mark queue entry CANCELLED
+    # Step 4: Mark queue entry CANCELLED
     entry.status = QueueStatus.CANCELLED
     entry.save(update_fields=['status', 'updated_at'])
 
-    # Step 2: Transition package THAW_QUEUED → PACKED
+    # Step 5: Transition package THAW_QUEUED → PACKED
     transition_package(package, 'PACKED', actor=actor,
                       reason=reason or 'Cancelled from thaw queue')
 
-    # Step 3: Recalculate active queue positions (scoped to profile)
+    # Step 6: Recalculate active queue positions (scoped to profile)
     _recalculate_queue_positions(profile=profile)
 
     return entry
@@ -395,36 +399,50 @@ def _cancel_queue_entries_for_plan(plan, actor='', reason=''):
     Cancel all active queue entries for a plan WITHOUT its own transaction.
 
     Must be called within an existing transaction.atomic block.
-    Acquires the CapacityLock for the plan's profile to serialize
-    against concurrent add_to_thaw_queue() calls.
+
+    Lock order (globally consistent):
+        1. Package rows (ascending pk — deterministic, prevents deadlocks)
+        2. CapacityLock
+
     If any entry fails to cancel, the entire outer transaction rolls back.
     """
     from common.state_machine import transition_package
 
     profile = plan.thaw_profile
 
-    # ── Acquire capacity lock (serializes against concurrent add/cancel) ──
-    _acquire_capacity_lock(profile)
-
     active_entries = list(ThawQueueEntry.objects.filter(
         rotation_plan=plan,
         status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START]
     ))
 
+    if not active_entries:
+        return
+
+    # ── STEP 1: Lock all affected Package rows (ascending pk order) ──
+    package_ids = sorted(e.package_id for e in active_entries)
+    for pid in package_ids:
+        Package.objects.select_for_update().get(pk=pid)
+
+    # ── STEP 2: Acquire CapacityLock (after all Package locks) ──
+    _acquire_capacity_lock(profile)
+
+    # ── STEP 3: Re-read entries under locks and cancel ──
     for entry in active_entries:
-        package = entry.package
+        entry.refresh_from_db()
+        package = Package.objects.get(pk=entry.package_id)
         if package.current_state != PackageState.THAW_QUEUED:
             raise ValueError(
                 f"Cannot cancel queue entry for {package}: "
                 f"state is {package.current_state}, expected THAW_QUEUED"
             )
+        if entry.status not in [QueueStatus.QUEUED, QueueStatus.READY_TO_START]:
+            continue  # already cancelled by concurrent mutation
         entry.status = QueueStatus.CANCELLED
         entry.save(update_fields=['status', 'updated_at'])
         transition_package(package, 'PACKED', actor=actor,
                           reason=reason or 'Plan cancelled')
 
-    if active_entries:
-        _recalculate_queue_positions(profile=profile)
+    _recalculate_queue_positions(profile=profile)
 
 
 @transaction.atomic

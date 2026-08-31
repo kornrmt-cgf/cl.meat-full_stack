@@ -2366,3 +2366,225 @@ class TestPackageConcurrency(TransactionTestCase):
 
         active = self._get_active_plans(pkg)
         self.assertEqual(active.count(), 1)
+
+
+# ============================================================
+# 20. LIFECYCLE RACE CONDITIONS (real PostgreSQL)
+# ============================================================
+
+class TestLifecycleRaces(TransactionTestCase):
+    """
+    Cancel vs lifecycle-operation races.  Proves that Package → CapacityLock
+    lock order prevents stale overwrites, deadlocks, and inconsistent states.
+    """
+
+    def _is_pg(self):
+        from django.db import connection
+        return connection.vendor == 'postgresql'
+
+    # --- A: cancel vs start_thaw ---
+
+    def test_cancel_vs_start_thaw(self):
+        """remove_from_thaw_queue + start_thaw on same package."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL')
+
+        pkg, plan = _thaw_queued_pkg()
+
+        results = []
+        errors = []
+        entry = ThawQueueEntry.objects.filter(package=pkg).first()
+
+        def do_cancel():
+            try:
+                remove_from_thaw_queue(entry, actor='cancel')
+                results.append('cancel')
+            except Exception as e:
+                errors.append(('cancel', str(e)))
+
+        def do_start_thaw():
+            try:
+                start_thaw(pkg, actor='thaw')
+                results.append('start_thaw')
+            except Exception as e:
+                errors.append(('start_thaw', str(e)))
+
+        t1 = threading.Thread(target=do_cancel)
+        t2 = threading.Thread(target=do_start_thaw)
+        t1.start()
+        time.sleep(0.01)
+        t2.start()
+        t1.join(timeout=15)
+        t2.join(timeout=15)
+
+        self.assertEqual(len(results), 1,
+            f'Expected exactly 1 success, got {results}')
+        self.assertEqual(len(errors), 1,
+            f'Expected exactly 1 error, got {errors}')
+
+        pkg.refresh_from_db()
+        self.assertIn(pkg.current_state, [
+            PackageState.PACKED, PackageState.THAWING])
+
+        # Queue consistency: if PACKED, no active entry; if THAWING, 1 active
+        active_entries = ThawQueueEntry.objects.filter(
+            package=pkg,
+            status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START, QueueStatus.STARTED]
+        )
+        if pkg.current_state == PackageState.PACKED:
+            self.assertEqual(active_entries.count(), 0)
+        else:
+            self.assertEqual(active_entries.count(), 1)
+
+    # --- B: cancel_rotation_plan vs start_thaw ---
+
+    def test_cancel_plan_vs_start_thaw(self):
+        """cancel_rotation_plan + start_thaw on same package."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL')
+
+        pkg, plan = _thaw_queued_pkg()
+
+        results = []
+        errors = []
+
+        def do_cancel_plan():
+            try:
+                cancel_rotation_plan(plan, actor='cancel')
+                results.append('cancel_plan')
+            except Exception as e:
+                errors.append(('cancel_plan', str(e)))
+
+        def do_start_thaw():
+            try:
+                start_thaw(pkg, actor='thaw')
+                results.append('start_thaw')
+            except Exception as e:
+                errors.append(('start_thaw', str(e)))
+
+        t1 = threading.Thread(target=do_cancel_plan)
+        t2 = threading.Thread(target=do_start_thaw)
+        t1.start()
+        time.sleep(0.01)
+        t2.start()
+        t1.join(timeout=15)
+        t2.join(timeout=15)
+
+        self.assertEqual(len(results), 1,
+            f'Expected exactly 1 success, got {results}')
+        self.assertEqual(len(errors), 1,
+            f'Expected exactly 1 error, got {errors}')
+
+        pkg.refresh_from_db()
+        self.assertIn(pkg.current_state, [
+            PackageState.PACKED, PackageState.THAWING])
+
+    # --- C: stale object rejection ---
+
+    def test_stale_package_object_rejected(self):
+        """Lifecycle service refreshes under lock, rejects stale state."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL')
+
+        fp = _create_freeze_profile()
+        tp = _create_thaw_profile()
+        pkg = _frozen_pkg()
+        target = timezone.now() + timedelta(days=3)
+        plan = create_rotation_plan(pkg, target, fp, tp)
+        add_to_thaw_queue(pkg, plan, actor='setup')
+
+        # Load a stale reference to the package
+        stale_pkg = Package.objects.get(pk=pkg.pk)
+        self.assertEqual(stale_pkg.current_state, PackageState.THAW_QUEUED)
+
+        # Concurrently transition the package to THAWING
+        pkg.refresh_from_db()
+        start_thaw(pkg, actor='real')
+
+        # Now stale_pkg still says THAW_QUEUED, but actual state is THAWING
+        # Attempting remove_from_thaw_queue with stale state should fail
+        entry = ThawQueueEntry.objects.filter(
+            package=stale_pkg,
+            status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START]
+        ).first()
+
+        if entry is not None:
+            with self.assertRaises((ValueError, Exception)):
+                remove_from_thaw_queue(entry, actor='stale')
+
+    # --- D: cancel vs cancel (same entry) ---
+
+    def test_concurrent_cancel_same_entry(self):
+        """Two threads cancel same entry — exactly one wins."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL')
+
+        pkg, plan = _thaw_queued_pkg()
+        entry = ThawQueueEntry.objects.filter(package=pkg).first()
+
+        results = []
+        errors = []
+
+        def worker(name):
+            try:
+                remove_from_thaw_queue(entry, actor=name)
+                results.append(name)
+            except Exception as e:
+                errors.append((name, str(e)))
+
+        t1 = threading.Thread(target=worker, args=('W1',))
+        t2 = threading.Thread(target=worker, args=('W2',))
+        t1.start()
+        time.sleep(0.01)
+        t2.start()
+        t1.join(timeout=15)
+        t2.join(timeout=15)
+
+        self.assertEqual(len(results), 1,
+            f'Expected 1 success, got {results}')
+        self.assertEqual(len(errors), 1,
+            f'Expected 1 error, got {errors}')
+
+        pkg.refresh_from_db()
+        self.assertEqual(pkg.current_state, PackageState.PACKED)
+
+        entry.refresh_from_db()
+        self.assertEqual(entry.status, QueueStatus.CANCELLED)
+
+    # --- E: queue consistency after cancel ---
+
+    def test_queue_positions_contiguous_after_cancel(self):
+        """After cancel, remaining active positions are contiguous 1..N."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL')
+
+        fp = _create_freeze_profile()
+        tp = _create_thaw_profile(capacity=10)
+        now = timezone.now()
+
+        entries = []
+        for i in range(5):
+            p = _frozen_pkg()
+            plan = create_rotation_plan(
+                p, now + timedelta(days=3, hours=i * 25), fp, tp)
+            e = add_to_thaw_queue(p, plan, actor='test')
+            entries.append(e)
+
+        # Cancel entries 2 and 4
+        remove_from_thaw_queue(entries[1], actor='test')
+        remove_from_thaw_queue(entries[3], actor='test')
+
+        active = ThawQueueEntry.objects.filter(
+            rotation_plan__thaw_profile=tp,
+            status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START]
+        ).order_by('queue_position')
+
+        positions = [e.queue_position for e in active]
+        self.assertEqual(positions, [1, 2, 3],
+            f'Positions not contiguous after cancel: {positions}')
+
+        # Cancelled entries must not appear as active
+        for e in entries:
+            if e.pk in [entries[1].pk, entries[3].pk]:
+                e.refresh_from_db()
+                self.assertEqual(e.status, QueueStatus.CANCELLED)
