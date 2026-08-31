@@ -227,7 +227,7 @@ def add_to_thaw_queue(package, rotation_plan, actor=''):
     #  This is now safe — no other thread can pass this point until we commit/rollback.
     new_start = rotation_plan.planned_thaw_start_at
     new_end = rotation_plan.target_ready_at
-    overlaps = check_thaw_interval_overlap(new_start, new_end, exclude_package=package)
+    overlaps = check_thaw_interval_overlap(profile, new_start, new_end, exclude_package=package)
     if len(overlaps) >= profile.thaw_capacity:
         raise ValueError(
             f"Thaw capacity exceeded: {len(overlaps)}/{profile.thaw_capacity} "
@@ -238,23 +238,25 @@ def add_to_thaw_queue(package, rotation_plan, actor=''):
     if can_transition(package.current_state, 'READY_FOR_THAW'):
         transition_package(package, 'READY_FOR_THAW', actor=actor)
 
-    # ── STEP 4: Queue position (PER PROFILE scope — serialized by capacity lock) ──
-    #  Business rule: queue_position is scoped per ThawProfile.
-    #  Each profile represents a distinct thaw resource (room/capacity pool).
-    #  Positions are unique within one profile's queue.
-    max_pos = ThawQueueEntry.objects.filter(
-        rotation_plan__thaw_profile=profile,
-        status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START]
-    ).aggregate(Max('queue_position'))['queue_position__max'] or 0
-
+    # ── STEP 4: Create entry + recalculate positions (serialized by capacity lock) ──
+    #  Positions are determined by _recalculate_queue_positions using
+    #  QUEUE_ORDERING = (planned_start_at, created_at, pk).
+    #  A new entry with an earlier timestamp immediately receives the
+    #  correct position — no manual recalculation required later.
     entry = ThawQueueEntry.objects.create(
         package=package, rotation_plan=rotation_plan,
         rotation_cycle=rotation_plan.rotation_cycle,
-        queue_position=max_pos + 1,
+        queue_position=0,  # placeholder — recalculated immediately below
         planned_start_at=rotation_plan.planned_thaw_start_at,
         target_ready_at=rotation_plan.target_ready_at,
         status=QueueStatus.QUEUED,
     )
+
+    # Assign correct position using the stable ordering rule
+    _recalculate_queue_positions(profile=profile)
+
+    # Refresh to return the entry with its actual position from DB
+    entry.refresh_from_db()
 
     # ── STEP 5: Transition READY_FOR_THAW → THAW_QUEUED ──
     transition_package(package, 'THAW_QUEUED', actor=actor)
@@ -523,19 +525,25 @@ def check_thaw_capacity_at_time(profile, target_time, exclude_package=None):
     }
 
 
-def check_thaw_interval_overlap(new_start, new_end, exclude_package=None):
+def check_thaw_interval_overlap(profile, new_start, new_end, exclude_package=None):
     """
-    Check if a new thaw interval overlaps with any active thaw operations.
+    Check if a new thaw interval overlaps with active thaw operations
+    within the same ThawProfile.
+
+    Business rule: each ThawProfile is a separate thaw resource with
+    independent capacity.  Capacity checking must be scoped to one profile.
 
     Args:
+        profile: ThawProfile — entries from other profiles are excluded
         new_start: Planned thaw start time
         new_end: Target ready time
         exclude_package: Package to exclude from check
 
     Returns:
-        list: Overlapping entries (empty if no conflict)
+        list: Overlapping entries within this profile (empty if no conflict)
     """
     active = ThawQueueEntry.objects.filter(
+        rotation_plan__thaw_profile=profile,
         status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START, QueueStatus.STARTED],
     )
     if exclude_package:

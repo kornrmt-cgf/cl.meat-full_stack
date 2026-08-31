@@ -1982,3 +1982,212 @@ class TestQueueOrderingDeterminism(TransactionTestCase):
             self.assertEqual(
                 current_order, initial_order,
                 f'Order changed on iteration {i}: {initial_order} → {current_order}')
+
+
+# ============================================================
+# 18. INSERT ORDERING + CROSS-PROFILE CAPACITY ISOLATION
+# ============================================================
+
+class TestInsertOrderingAndProfileIsolation(TransactionTestCase):
+    """
+    Proves that:
+    - add_to_thaw_queue immediately assigns correct position via QUEUE_ORDERING
+    - capacity checking is scoped per ThawProfile
+    - cross-profile capacity is independent
+    """
+
+    def _is_pg(self):
+        from django.db import connection
+        return connection.vendor == 'postgresql'
+
+    def _get_active_entries(self, profile):
+        return list(
+            ThawQueueEntry.objects.filter(
+                rotation_plan__thaw_profile=profile,
+                status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START]
+            ).order_by('queue_position')
+        )
+
+    def _get_active_positions(self, profile):
+        return [e.queue_position for e in self._get_active_entries(profile)]
+
+    # --- Test A: insert ordering ---
+
+    def test_earlier_entry_gets_lower_position(self):
+        """New entry with earlier planned_start_at gets position 1."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL')
+
+        fp = _create_freeze_profile()
+        tp = _create_thaw_profile(capacity=5)
+        now = timezone.now()
+
+        # First: later entry at 11:00
+        p_late = _frozen_pkg()
+        plan_late = create_rotation_plan(
+            p_late, now + timedelta(days=3, hours=1), fp, tp)
+        e_late = add_to_thaw_queue(p_late, plan_late, actor='test')
+
+        # Second: earlier entry at 10:00
+        p_early = _frozen_pkg()
+        plan_early = create_rotation_plan(
+            p_early, now + timedelta(days=3), fp, tp)
+        e_early = add_to_thaw_queue(p_early, plan_early, actor='test')
+
+        # e_early should be position 1 (earlier time)
+        e_early.refresh_from_db()
+        e_late.refresh_from_db()
+        self.assertEqual(e_early.queue_position, 1,
+            f'Earlier entry should be position 1, got {e_early.queue_position}')
+        self.assertEqual(e_late.queue_position, 2,
+            f'Later entry should be position 2, got {e_late.queue_position}')
+
+    # --- Test B: same timestamp deterministic order ---
+
+    def test_same_timestamp_deterministic_on_insert(self):
+        """Two entries with same planned_start_at get stable positions on insert."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL')
+
+        fp = _create_freeze_profile()
+        tp = _create_thaw_profile(capacity=5)
+        now = timezone.now()
+        target = now + timedelta(days=3)
+
+        p1 = _frozen_pkg()
+        p2 = _frozen_pkg()
+        plan1 = create_rotation_plan(p1, target, fp, tp)
+        plan2 = create_rotation_plan(p2, target, fp, tp)
+
+        e1 = add_to_thaw_queue(p1, plan1, actor='test')
+        e2 = add_to_thaw_queue(p2, plan2, actor='test')
+
+        # Positions must be 1, 2 (determined by created_at then pk)
+        self.assertEqual(e1.queue_position, 1)
+        self.assertEqual(e2.queue_position, 2)
+
+        # Stable: recalculate should not change
+        _recalculate_queue_positions(profile=tp)
+        e1.refresh_from_db()
+        e2.refresh_from_db()
+        self.assertEqual(e1.queue_position, 1)
+        self.assertEqual(e2.queue_position, 2)
+
+    # --- Test C: cross-profile capacity isolation ---
+
+    def test_cross_profile_capacity_independent(self):
+        """Profile A capacity=1 and Profile B capacity=1 allow overlapping intervals."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL')
+
+        fp = _create_freeze_profile()
+        tp_a = _create_thaw_profile(capacity=1)
+        tp_a.name = 'Room-A'; tp_a.save()
+        tp_b = _create_thaw_profile(capacity=1)
+        tp_b.name = 'Room-B'; tp_b.save()
+        now = timezone.now()
+        target = now + timedelta(days=3)
+
+        # A1 at 10:00-12:00 in Profile A
+        p_a1 = _frozen_pkg()
+        plan_a1 = create_rotation_plan(p_a1, target, fp, tp_a)
+        e_a1 = add_to_thaw_queue(p_a1, plan_a1, actor='test')
+
+        # B1 at 10:30-11:30 in Profile B (overlapping time, different profile)
+        p_b1 = _frozen_pkg()
+        plan_b1 = create_rotation_plan(
+            p_b1, target - timedelta(hours=1), fp, tp_b)
+        e_b1 = add_to_thaw_queue(p_b1, plan_b1, actor='test')
+
+        # Both must succeed — different profiles
+        self.assertIsNotNone(e_a1)
+        self.assertIsNotNone(e_b1)
+        self.assertEqual(self._get_active_count(tp_a), 1)
+        self.assertEqual(self._get_active_count(tp_b), 1)
+
+    # --- Test D: same-profile capacity enforced ---
+
+    def test_same_profile_capacity_enforced(self):
+        """Profile A capacity=1 rejects overlapping second entry."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL')
+
+        fp = _create_freeze_profile()
+        tp = _create_thaw_profile(capacity=1)
+        now = timezone.now()
+        target = now + timedelta(days=3)
+
+        p1 = _frozen_pkg()
+        plan1 = create_rotation_plan(p1, target, fp, tp)
+        add_to_thaw_queue(p1, plan1, actor='test')
+
+        # Overlapping entry in same profile
+        p2 = _frozen_pkg()
+        plan2 = create_rotation_plan(p2, target, fp, tp)
+        with self.assertRaises(ValueError) as ctx:
+            add_to_thaw_queue(p2, plan2, actor='test')
+        self.assertIn('capacity', str(ctx.exception).lower())
+
+    # --- Test E: multiple profiles concurrent ---
+
+    def test_multi_profile_concurrent_independent(self):
+        """Concurrent admissions across Profile A and B are independent."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL')
+
+        fp = _create_freeze_profile()
+        tp_a = _create_thaw_profile(capacity=2)
+        tp_a.name = 'Room-A2'; tp_a.save()
+        tp_b = _create_thaw_profile(capacity=2)
+        tp_b.name = 'Room-B2'; tp_b.save()
+        now = timezone.now()
+
+        # 2 non-overlapping entries per profile
+        a_entries = []
+        b_entries = []
+        for i in range(2):
+            p = _frozen_pkg()
+            plan = create_rotation_plan(
+                p, now + timedelta(days=3, hours=i * 25), fp, tp_a)
+            a_entries.append((p, plan))
+            p = _frozen_pkg()
+            plan = create_rotation_plan(
+                p, now + timedelta(days=3, hours=i * 25), fp, tp_b)
+            b_entries.append((p, plan))
+
+        errors = []
+
+        def do_add(pkg, plan, name):
+            try:
+                add_to_thaw_queue(pkg, plan, actor=name)
+            except Exception as e:
+                errors.append((name, str(e)))
+
+        threads = []
+        for i, (pkg, plan) in enumerate(a_entries):
+            threads.append(threading.Thread(
+                target=do_add, args=(pkg, plan, f'A{i}')))
+        for i, (pkg, plan) in enumerate(b_entries):
+            threads.append(threading.Thread(
+                target=do_add, args=(pkg, plan, f'B{i}')))
+
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=15)
+
+        self.assertEqual(len(errors), 0, f'Errors: {errors}')
+
+        # Each profile has 2 entries, positions [1, 2]
+        pos_a = self._get_active_positions(tp_a)
+        pos_b = self._get_active_positions(tp_b)
+        self.assertEqual(sorted(pos_a), [1, 2],
+            f'Profile A positions wrong: {pos_a}')
+        self.assertEqual(sorted(pos_b), [1, 2],
+            f'Profile B positions wrong: {pos_b}')
+
+    def _get_active_count(self, profile):
+        return ThawQueueEntry.objects.filter(
+            rotation_plan__thaw_profile=profile,
+            status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START]
+        ).count()

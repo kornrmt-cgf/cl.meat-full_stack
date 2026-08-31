@@ -532,6 +532,7 @@ class TestThawCapacity(PlanningTestBase):
 
         # New interval that overlaps with existing
         overlaps = check_thaw_interval_overlap(
+            self.thaw_profile,
             plan1.planned_thaw_start_at,
             plan1.target_ready_at,
         )
@@ -546,7 +547,7 @@ class TestThawCapacity(PlanningTestBase):
         # New interval far in the future (no overlap)
         future_start = plan1.target_ready_at + timedelta(hours=24)
         future_end = future_start + timedelta(hours=12)
-        overlaps = check_thaw_interval_overlap(future_start, future_end)
+        overlaps = check_thaw_interval_overlap(self.thaw_profile, future_start, future_end)
         self.assertEqual(len(overlaps), 0)
 
 
