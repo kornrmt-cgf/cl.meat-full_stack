@@ -776,11 +776,11 @@ def get_available_for_planning():
     Returns:
         QuerySet of Package objects
     """
-    from planning.models import RotationPlan
+    from planning.models import RotationPlan, PlanStatus
     frozen_pks = Package.objects.filter(
         current_state=PackageState.FROZEN
     ).exclude(
-        rotation_plan__status__in=['PLANNED', 'IN_PROGRESS']
+        rotation_plans__status__in=[PlanStatus.PLANNED, PlanStatus.IN_PROGRESS]
     ).values_list('pk', flat=True)
     return Package.objects.filter(pk__in=frozen_pks)
 

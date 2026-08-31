@@ -4,10 +4,12 @@ Planning Models — rotation scheduling with configurable profiles.
 Core entities:
 - FreezeProfile: configurable freeze parameters
 - ThawProfile: configurable thaw parameters with weight-based duration
-- RotationPlan: central plan linking package to target ready time
+- RotationCycle: one freeze-thaw-display cycle for a package
+- RotationPlan: central plan linking a cycle to target ready time
 - ThawQueueEntry: queue entries for thaw operations
 
 Design: AUTO mode calculates from profiles, CUSTOM mode allows overrides.
+RotationCycle enables repeated rotation cycles per package.
 """
 from django.db import models
 from datetime import timedelta
@@ -132,6 +134,87 @@ class PlanStatus(models.TextChoices):
 
 
 # ============================================================
+# ROTATION CYCLE
+# ============================================================
+
+class RotationCycle(models.Model):
+    """
+    One complete freeze-thaw-display cycle for a package.
+
+    A package can have multiple cycles (refreeze → display → refreeze).
+    Each cycle tracks timestamps for every phase.
+    History is append-only; completed cycles are never overwritten.
+    """
+
+    CYCLE_STATUS_CHOICES = [
+        ('IN_PROGRESS', 'In Progress'),
+        ('COMPLETED', 'Completed'),
+        ('CANCELLED', 'Cancelled'),
+    ]
+
+    package = models.ForeignKey(
+        'inventory.Package', on_delete=models.PROTECT, related_name='rotation_cycles'
+    )
+    cycle_number = models.PositiveIntegerField(
+        help_text='Cycle number for this package (1, 2, 3, ...)'
+    )
+    status = models.CharField(
+        max_length=20, choices=CYCLE_STATUS_CHOICES, default='IN_PROGRESS'
+    )
+
+    # Freeze timestamps
+    freeze_started_at = models.DateTimeField(null=True, blank=True)
+    freeze_completed_at = models.DateTimeField(null=True, blank=True)
+
+    # Thaw timestamps
+    thaw_started_at = models.DateTimeField(null=True, blank=True)
+    thaw_completed_at = models.DateTimeField(null=True, blank=True)
+
+    # Display timestamps
+    display_started_at = models.DateTimeField(null=True, blank=True)
+    display_ended_at = models.DateTimeField(null=True, blank=True)
+
+    # Outcome
+    OUTCOME_CHOICES = [
+        ('', 'Pending'),
+        ('SOLD', 'Sold'),
+        ('DISCARDED', 'Discarded'),
+        ('REFROZEN', 'Refrozen'),
+        ('CANCELLED', 'Cancelled'),
+    ]
+    outcome = models.CharField(max_length=20, choices=OUTCOME_CHOICES, default='')
+    outcome_reason = models.TextField(blank=True, default='')
+    outcome_actor = models.CharField(max_length=100, blank=True, default='')
+    outcome_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['package', 'cycle_number']
+        unique_together = ['package', 'cycle_number']
+        verbose_name = 'Rotation Cycle'
+        verbose_name_plural = 'Rotation Cycles'
+
+    def __str__(self):
+        return f"Cycle {self.cycle_number} for {self.package.display_name} ({self.status})"
+
+    @property
+    def duration_freeze(self):
+        """Actual freeze duration if both timestamps exist."""
+        if self.freeze_started_at and self.freeze_completed_at:
+            return self.freeze_completed_at - self.freeze_started_at
+        return None
+
+    @property
+    def duration_thaw(self):
+        """Actual thaw duration if both timestamps exist."""
+        if self.thaw_started_at and self.thaw_completed_at:
+            return self.thaw_completed_at - self.thaw_started_at
+        return None
+
+
+# ============================================================
 # ROTATION PLAN
 # ============================================================
 
@@ -140,10 +223,15 @@ class RotationPlan(models.Model):
     Central planning entity linking a package to its target ready time.
 
     Contains all calculated timings and supports manual overrides.
+    Now references RotationCycle for multi-cycle support.
     """
 
-    package = models.OneToOneField(
-        'inventory.Package', on_delete=models.PROTECT, related_name='rotation_plan'
+    package = models.ForeignKey(
+        'inventory.Package', on_delete=models.PROTECT, related_name='rotation_plans'
+    )
+    rotation_cycle = models.ForeignKey(
+        RotationCycle, null=True, blank=True,
+        on_delete=models.PROTECT, related_name='plans'
     )
     target_ready_at = models.DateTimeField(help_text="When package should be ready for sale")
     planned_thaw_start_at = models.DateTimeField(help_text="Calculated thaw start time")
@@ -210,8 +298,12 @@ class QueueStatus(models.TextChoices):
 class ThawQueueEntry(models.Model):
     """Queue entry for thaw operations."""
 
-    package = models.OneToOneField(
-        'inventory.Package', on_delete=models.PROTECT, related_name='thaw_queue_entry'
+    package = models.ForeignKey(
+        'inventory.Package', on_delete=models.PROTECT, related_name='thaw_queue_entries'
+    )
+    rotation_cycle = models.ForeignKey(
+        RotationCycle, null=True, blank=True,
+        on_delete=models.PROTECT, related_name='queue_entries'
     )
     rotation_plan = models.ForeignKey(
         RotationPlan, on_delete=models.PROTECT, related_name='queue_entries'

@@ -163,18 +163,24 @@ def _validate_transition_requirements(package, target_state):
         - ON_DISPLAY: must be READY_FOR_SALE
     """
     if target_state == 'THAW_QUEUED':
-        from planning.models import RotationPlan
-        if not RotationPlan.objects.filter(package=package).exists():
+        from planning.models import RotationPlan, PlanStatus
+        if not RotationPlan.objects.filter(
+            package=package,
+            status__in=[PlanStatus.PLANNED, PlanStatus.READY, PlanStatus.IN_PROGRESS]
+        ).exists():
             raise TransitionValidationError(
-                "Cannot queue for thaw: package has no rotation plan. "
+                "Cannot queue for thaw: package has no active rotation plan. "
                 "Create a rotation plan first."
             )
 
     elif target_state == 'THAWING':
-        from planning.models import RotationPlan, ThawQueueEntry
-        if not RotationPlan.objects.filter(package=package).exists():
+        from planning.models import RotationPlan, ThawQueueEntry, PlanStatus
+        if not RotationPlan.objects.filter(
+            package=package,
+            status__in=[PlanStatus.PLANNED, PlanStatus.READY, PlanStatus.IN_PROGRESS]
+        ).exists():
             raise TransitionValidationError(
-                "Cannot start thawing: package has no rotation plan."
+                "Cannot start thawing: package has no active rotation plan."
             )
         from planning.models import QueueStatus
         if not ThawQueueEntry.objects.filter(

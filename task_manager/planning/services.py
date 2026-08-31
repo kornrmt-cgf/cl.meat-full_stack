@@ -3,6 +3,27 @@ Planning Services — rotation plan lifecycle.
 
 Core: create plan, generate tasks, manage queue, cancel.
 Duration calculation: profile-based AUTO mode + CUSTOM overrides.
+
+Phase 04: freeze/thaw lifecycle services.
+All lifecycle mutations are atomic and create audit events.
+
+══════════════════════════════════════════════════════════════
+LIFECYCLE
+══════════════════════════════════════════════════════════════
+
+  PACKED → start_freeze → FREEZING
+  FREEZING → complete_freeze → FROZEN
+  FROZEN → add_to_thaw_queue → READY_FOR_THAW → THAW_QUEUED
+  THAW_QUEUED → start_thaw → THAWING
+  THAWING → complete_thaw → READY_FOR_SALE
+  READY_FOR_SALE → move_to_display → ON_DISPLAY
+  ON_DISPLAY → request_refreeze → REFREEZE_PENDING
+  REFREEZE_PENDING → start_refreeze → FREEZING (new cycle)
+  ON_DISPLAY → sell / process → COMPLETED
+  ON_DISPLAY → discard → COMPLETED
+
+Cancellation:
+  THAW_QUEUED → remove_from_thaw_queue → PACKED
 """
 from django.db import transaction
 from django.db.models import Max
@@ -10,7 +31,7 @@ from django.utils import timezone
 from datetime import timedelta
 
 from planning.models import (
-    FreezeProfile, ThawProfile, RotationPlan, PlanStatus,
+    FreezeProfile, ThawProfile, RotationPlan, RotationCycle, PlanStatus,
     ThawQueueEntry, QueueStatus,
 )
 from inventory.models import Package, PackageState
@@ -66,8 +87,13 @@ def create_rotation_plan(package, target_ready_at, freeze_profile, thaw_profile,
     """
     if package.current_state not in (PackageState.PACKED, PackageState.FROZEN):
         raise ValueError(f"Package must be PACKED or FROZEN, got {package.current_state}")
-    if RotationPlan.objects.filter(package=package).exists():
-        raise ValueError("Package already has a rotation plan.")
+    # Allow new plan only if no active plan exists for this package
+    active_plans = RotationPlan.objects.filter(
+        package=package,
+        status__in=[PlanStatus.PLANNED, PlanStatus.READY, PlanStatus.IN_PROGRESS]
+    )
+    if active_plans.exists():
+        raise ValueError("Package already has an active rotation plan.")
 
     freeze_dur = calculate_freeze_duration(package, freeze_profile)
     thaw_dur = calculate_thaw_duration(package, thaw_profile)
@@ -87,8 +113,12 @@ def create_rotation_plan(package, target_ready_at, freeze_profile, thaw_profile,
     if freeze_start <= timezone.now():
         raise ValueError("Target ready time is too soon — freeze start would be in the past.")
 
+    # Find or create rotation cycle
+    cycle = _get_or_create_cycle(package)
+
     plan = RotationPlan.objects.create(
         package=package,
+        rotation_cycle=cycle,
         target_ready_at=target_ready_at,
         planned_thaw_start_at=thaw_start,
         planned_thaw_queue_at=thaw_queue,
@@ -199,6 +229,7 @@ def add_to_thaw_queue(package, rotation_plan, actor=''):
 
     entry = ThawQueueEntry.objects.create(
         package=package, rotation_plan=rotation_plan,
+        rotation_cycle=rotation_plan.rotation_cycle,
         queue_position=max_pos + 1,
         planned_start_at=rotation_plan.planned_thaw_start_at,
         target_ready_at=rotation_plan.target_ready_at,
@@ -426,3 +457,386 @@ def check_thaw_interval_overlap(new_start, new_end, exclude_package=None):
         if check_interval_overlap(new_start, new_end, entry.planned_start_at, entry.target_ready_at):
             overlaps.append(entry)
     return overlaps
+
+
+# ============================================================
+# ROTATION CYCLE HELPERS
+# ============================================================
+
+def _get_or_create_cycle(package):
+    """Get the current IN_PROGRESS cycle or create a new one.
+
+    Each package starts with cycle_number=1.
+    A new cycle is created when a refreeze occurs.
+    """
+    from planning.models import RotationCycle
+
+    cycle = RotationCycle.objects.filter(
+        package=package, status='IN_PROGRESS'
+    ).order_by('-cycle_number').first()
+
+    if cycle is None:
+        last_num = RotationCycle.objects.filter(
+            package=package
+        ).order_by('-cycle_number').values_list('cycle_number', flat=True).first() or 0
+        cycle = RotationCycle.objects.create(
+            package=package,
+            cycle_number=last_num + 1,
+            status='IN_PROGRESS',
+        )
+    return cycle
+
+
+def _complete_cycle(cycle, outcome, actor='', reason=''):
+    """Mark a rotation cycle as completed with an outcome."""
+    cycle.status = 'COMPLETED'
+    cycle.outcome = outcome
+    cycle.outcome_reason = reason
+    cycle.outcome_actor = actor
+    cycle.outcome_at = timezone.now()
+    cycle.save(update_fields=[
+        'status', 'outcome', 'outcome_reason',
+        'outcome_actor', 'outcome_at', 'updated_at',
+    ])
+
+
+# ============================================================
+# FREEZE LIFECYCLE SERVICES
+# ============================================================
+
+@transaction.atomic
+def start_freeze(package, actor='', reason=''):
+    """Start freezing a package: PACKED -> FREEZING.
+
+    Creates or updates the RotationCycle freeze_started_at timestamp.
+    Package must be in PACKED state.
+
+    Args:
+        package: Package in PACKED state
+        actor: who started the freeze
+        reason: why
+
+    Returns:
+        tuple: (package, cycle)
+
+    Raises:
+        ValueError: if package is not in PACKED state
+    """
+    from common.state_machine import transition_package
+    package = Package.objects.select_for_update().get(pk=package.pk)
+
+    if package.current_state != PackageState.PACKED:
+        raise ValueError(
+            f"Cannot start freeze: package is {package.current_state}, "
+            f"must be PACKED"
+        )
+
+    transition_package(package, 'FREEZING', actor=actor,
+                      reason=reason or 'Freeze started')
+
+    cycle = _get_or_create_cycle(package)
+    cycle.freeze_started_at = timezone.now()
+    cycle.save(update_fields=['freeze_started_at', 'updated_at'])
+
+    return package, cycle
+
+
+@transaction.atomic
+def complete_freeze(package, actor='', reason=''):
+    """Complete freezing: FREEZING -> FROZEN.
+
+    Updates RotationCycle freeze_completed_at.
+    Package must be in FREEZING state.
+
+    Args:
+        package: Package in FREEZING state
+        actor: who completed the freeze
+        reason: why
+
+    Returns:
+        tuple: (package, cycle)
+    """
+    from common.state_machine import transition_package
+    package = Package.objects.select_for_update().get(pk=package.pk)
+
+    if package.current_state != PackageState.FREEZING:
+        raise ValueError(
+            f"Cannot complete freeze: package is {package.current_state}, "
+            f"must be FREEZING"
+        )
+
+    transition_package(package, 'FROZEN', actor=actor,
+                      reason=reason or 'Freeze completed')
+
+    cycle = RotationCycle.objects.filter(
+        package=package, status='IN_PROGRESS'
+    ).order_by('-cycle_number').first()
+    if cycle:
+        cycle.freeze_completed_at = timezone.now()
+        cycle.save(update_fields=['freeze_completed_at', 'updated_at'])
+
+    return package, cycle
+
+
+# ============================================================
+# THAW LIFECYCLE SERVICES
+# ============================================================
+
+@transaction.atomic
+def start_thaw(package, actor='', reason=''):
+    """Start thawing: THAW_QUEUED -> THAWING.
+
+    Updates RotationCycle thaw_started_at.
+    Updates ThawQueueEntry status to STARTED.
+
+    Args:
+        package: Package in THAW_QUEUED state
+        actor: who started the thaw
+        reason: why
+
+    Returns:
+        tuple: (package, cycle)
+    """
+    from common.state_machine import transition_package
+    package = Package.objects.select_for_update().get(pk=package.pk)
+
+    if package.current_state != PackageState.THAW_QUEUED:
+        raise ValueError(
+            f"Cannot start thaw: package is {package.current_state}, "
+            f"must be THAW_QUEUED"
+        )
+
+    transition_package(package, 'THAWING', actor=actor,
+                      reason=reason or 'Thaw started')
+
+    # Update queue entry status
+    ThawQueueEntry.objects.filter(
+        package=package,
+        status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START]
+    ).update(status=QueueStatus.STARTED)
+
+    cycle = RotationCycle.objects.filter(
+        package=package, status='IN_PROGRESS'
+    ).order_by('-cycle_number').first()
+    if cycle:
+        cycle.thaw_started_at = timezone.now()
+        cycle.save(update_fields=['thaw_started_at', 'updated_at'])
+
+    return package, cycle
+
+
+@transaction.atomic
+def complete_thaw(package, actor='', reason=''):
+    """Complete thawing: THAWING -> READY_FOR_SALE.
+
+    Updates RotationCycle thaw_completed_at.
+    Marks queue entry COMPLETED.
+
+    Args:
+        package: Package in THAWING state
+        actor: who completed the thaw
+        reason: why
+
+    Returns:
+        tuple: (package, cycle)
+    """
+    from common.state_machine import transition_package
+    package = Package.objects.select_for_update().get(pk=package.pk)
+
+    if package.current_state != PackageState.THAWING:
+        raise ValueError(
+            f"Cannot complete thaw: package is {package.current_state}, "
+            f"must be THAWING"
+        )
+
+    # Mark queue entry COMPLETED first (state machine validates this for READY_FOR_SALE)
+    ThawQueueEntry.objects.filter(
+        package=package,
+        status=QueueStatus.STARTED
+    ).update(status=QueueStatus.COMPLETED)
+
+    transition_package(package, 'READY_FOR_SALE', actor=actor,
+                      reason=reason or 'Thaw completed')
+
+    cycle = RotationCycle.objects.filter(
+        package=package, status='IN_PROGRESS'
+    ).order_by('-cycle_number').first()
+    if cycle:
+        cycle.thaw_completed_at = timezone.now()
+        cycle.save(update_fields=['thaw_completed_at', 'updated_at'])
+
+    return package, cycle
+
+
+# ============================================================
+# DISPLAY LIFECYCLE SERVICES
+# ============================================================
+
+@transaction.atomic
+def move_to_display(package, actor='', reason=''):
+    """Move to display: READY_FOR_SALE -> ON_DISPLAY.
+
+    Updates RotationCycle display_started_at.
+
+    Args:
+        package: Package in READY_FOR_SALE state
+        actor: who moved it
+        reason: why
+
+    Returns:
+        tuple: (package, cycle)
+    """
+    from common.state_machine import transition_package
+    package = Package.objects.select_for_update().get(pk=package.pk)
+
+    if package.current_state != PackageState.READY_FOR_SALE:
+        raise ValueError(
+            f"Cannot move to display: package is {package.current_state}, "
+            f"must be READY_FOR_SALE"
+        )
+
+    transition_package(package, 'ON_DISPLAY', actor=actor,
+                      reason=reason or 'Moved to display')
+
+    cycle = RotationCycle.objects.filter(
+        package=package, status='IN_PROGRESS'
+    ).order_by('-cycle_number').first()
+    if cycle:
+        cycle.display_started_at = timezone.now()
+        cycle.save(update_fields=['display_started_at', 'updated_at'])
+
+    return package, cycle
+
+
+# ============================================================
+# REFREEZE LIFECYCLE SERVICES
+# ============================================================
+
+@transaction.atomic
+def request_refreeze(package, actor='', reason=''):
+    """Request refreeze: ON_DISPLAY -> REFREEZE_PENDING.
+
+    Records display_ended_at on the current cycle.
+
+    Args:
+        package: Package in ON_DISPLAY state
+        actor: who requested refreeze
+        reason: why
+
+    Returns:
+        tuple: (package, cycle)
+    """
+    from common.state_machine import transition_package
+    package = Package.objects.select_for_update().get(pk=package.pk)
+
+    if package.current_state != PackageState.ON_DISPLAY:
+        raise ValueError(
+            f"Cannot request refreeze: package is {package.current_state}, "
+            f"must be ON_DISPLAY"
+        )
+
+    transition_package(package, 'REFREEZE_PENDING', actor=actor,
+                      reason=reason or 'Refreeze requested')
+
+    cycle = RotationCycle.objects.filter(
+        package=package, status='IN_PROGRESS'
+    ).order_by('-cycle_number').first()
+    if cycle:
+        cycle.display_ended_at = timezone.now()
+        cycle.save(update_fields=['display_ended_at', 'updated_at'])
+
+    return package, cycle
+
+
+@transaction.atomic
+def start_refreeze(package, actor='', reason=''):
+    """Start refreeze: REFREEZE_PENDING -> FREEZING.
+
+    Completes the current cycle as REFROZEN and creates a new cycle.
+    History is append-only: old cycle timestamps are preserved.
+
+    Args:
+        package: Package in REFREEZE_PENDING state
+        actor: who started the refreeze
+        reason: why
+
+    Returns:
+        tuple: (package, new_cycle)
+    """
+    from common.state_machine import transition_package
+    from planning.models import RotationCycle
+
+    package = Package.objects.select_for_update().get(pk=package.pk)
+
+    if package.current_state != PackageState.REFREEZE_PENDING:
+        raise ValueError(
+            f"Cannot start refreeze: package is {package.current_state}, "
+            f"must be REFREEZE_PENDING"
+        )
+
+    # Complete current cycle as REFROZEN
+    old_cycle = RotationCycle.objects.filter(
+        package=package, status='IN_PROGRESS'
+    ).order_by('-cycle_number').first()
+    if old_cycle:
+        _complete_cycle(old_cycle, 'REFROZEN', actor=actor, reason=reason)
+
+    # Mark old rotation plan as COMPLETED so a new plan can be created
+    RotationPlan.objects.filter(
+        package=package,
+        status__in=[PlanStatus.PLANNED, PlanStatus.READY, PlanStatus.IN_PROGRESS]
+    ).update(status=PlanStatus.COMPLETED)
+
+    transition_package(package, 'FREEZING', actor=actor,
+                      reason=reason or 'Refreeze started')
+
+    # Create new cycle
+    new_cycle = _get_or_create_cycle(package)
+    new_cycle.freeze_started_at = timezone.now()
+    new_cycle.save(update_fields=['freeze_started_at', 'updated_at'])
+
+    return package, new_cycle
+
+
+# ============================================================
+# COMPLETION SERVICES (sell/discard from any valid state)
+# ============================================================
+
+@transaction.atomic
+def complete_sale(package, actor='', reason=''):
+    """Complete sale: ON_DISPLAY -> PROCESSING -> COMPLETED.
+
+    Marks the current cycle as SOLD.
+    """
+    from inventory.services import sell_package
+
+    # sell_package handles state transitions and audit
+    sell_package(package, actor=actor, reason=reason)
+
+    # Complete cycle
+    cycle = RotationCycle.objects.filter(
+        package=package, status='IN_PROGRESS'
+    ).order_by('-cycle_number').first()
+    if cycle:
+        _complete_cycle(cycle, 'SOLD', actor=actor, reason=reason)
+
+    return package
+
+
+@transaction.atomic
+def complete_discard(package, actor='', reason=''):
+    """Complete discard: ON_DISPLAY -> DISCARDED -> COMPLETED.
+
+    Marks the current cycle as DISCARDED.
+    """
+    from inventory.services import discard_package
+
+    discard_package(package, actor=actor, reason=reason)
+
+    cycle = RotationCycle.objects.filter(
+        package=package, status='IN_PROGRESS'
+    ).order_by('-cycle_number').first()
+    if cycle:
+        _complete_cycle(cycle, 'DISCARDED', actor=actor, reason=reason)
+
+    return package
