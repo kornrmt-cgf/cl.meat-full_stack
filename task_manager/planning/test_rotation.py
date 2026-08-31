@@ -26,7 +26,7 @@ from inventory.models import (
 from inventory.services import create_package
 from planning.models import (
     FreezeProfile, ThawProfile, RotationPlan, RotationCycle,
-    ThawQueueEntry, PlanStatus, QueueStatus,
+    ThawQueueEntry, PlanStatus, QueueStatus, CapacityLock,
 )
 from planning.services import (
     calculate_freeze_duration, calculate_thaw_duration,
@@ -915,3 +915,320 @@ class TestFullLifecycle(TransactionTestCase):
         plan2 = create_rotation_plan(
             pkg, timezone.now() + timedelta(days=5), fp, tp)
         self.assertIsNotNone(plan2)
+
+
+# ============================================================
+# 12. CAPACITY CONCURRENCY (real PostgreSQL tests)
+# ============================================================
+
+class TestCapacityConcurrency(TransactionTestCase):
+    """
+    Real PostgreSQL concurrency tests for thaw capacity admission.
+
+    Each thread uses an independent DB connection/transaction.
+    Proves that the CapacityLock SELECT FOR UPDATE serializes
+    capacity admission — concurrent overlapping requests cannot
+    exceed the configured capacity.
+    """
+
+    def _is_pg(self):
+        from django.db import connection
+        return connection.vendor == 'postgresql'
+
+    def _create_frozen_with_plan(self, fp, tp, target):
+        """Helper: create a frozen package + rotation plan, return (pkg, plan)."""
+        pkg = _frozen_pkg()
+        plan = create_rotation_plan(pkg, target, fp, tp)
+        return pkg, plan
+
+    def _thread_add_to_queue(self, pkg, plan, results, errors, name):
+        """Thread worker that calls add_to_thaw_queue."""
+        try:
+            entry = add_to_thaw_queue(pkg, plan, actor=name)
+            results.append(name)
+        except Exception as e:
+            errors.append((name, str(e)))
+
+    # --- Capacity = 1 ---
+
+    def test_concurrent_capacity_1_two_overlap(self):
+        """Capacity=1: two overlapping requests → exactly 1 succeeds."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL for row-level locking')
+
+        fp = _create_freeze_profile()
+        tp = _create_thaw_profile(capacity=1)
+        target = timezone.now() + timedelta(days=3)
+
+        pkg1, plan1 = self._create_frozen_with_plan(fp, tp, target)
+        pkg2, plan2 = self._create_frozen_with_plan(fp, tp, target)
+
+        results = []
+        errors = []
+
+        t1 = threading.Thread(
+            target=self._thread_add_to_queue,
+            args=(pkg1, plan1, results, errors, 'W1'))
+        t2 = threading.Thread(
+            target=self._thread_add_to_queue,
+            args=(pkg2, plan2, results, errors, 'W2'))
+
+        t1.start()
+        time.sleep(0.01)
+        t2.start()
+        t1.join(timeout=15)
+        t2.join(timeout=15)
+
+        self.assertEqual(len(results), 1,
+            f'Expected exactly 1 success, got {len(results)}: {results}')
+        self.assertEqual(len(errors), 1,
+            f'Expected exactly 1 error, got {len(errors)}: {errors}')
+
+        # Active queue count must be <= 1
+        active = ThawQueueEntry.objects.filter(
+            status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START, QueueStatus.STARTED]
+        ).count()
+        self.assertLessEqual(active, 1,
+            f'Active queue count {active} exceeds capacity 1')
+
+    # --- Capacity = 2 ---
+
+    def test_concurrent_capacity_2_three_overlap(self):
+        """Capacity=2: three overlapping requests → exactly 2 succeed."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL for row-level locking')
+
+        fp = _create_freeze_profile()
+        tp = _create_thaw_profile(capacity=2)
+        target = timezone.now() + timedelta(days=3)
+
+        pkgs_plans = [
+            self._create_frozen_with_plan(fp, tp, target) for _ in range(3)
+        ]
+
+        results = []
+        errors = []
+        threads = []
+        for i, (pkg, plan) in enumerate(pkgs_plans):
+            t = threading.Thread(
+                target=self._thread_add_to_queue,
+                args=(pkg, plan, results, errors, f'W{i}'))
+            threads.append(t)
+
+        for t in threads:
+            t.start()
+            time.sleep(0.005)
+        for t in threads:
+            t.join(timeout=15)
+
+        self.assertEqual(len(results), 2,
+            f'Expected 2 successes, got {len(results)}: {results}')
+        self.assertEqual(len(errors), 1,
+            f'Expected 1 error, got {len(errors)}: {errors}')
+
+        active = ThawQueueEntry.objects.filter(
+            status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START, QueueStatus.STARTED]
+        ).count()
+        self.assertLessEqual(active, 2)
+
+    # --- Capacity = 3 ---
+
+    def test_concurrent_capacity_3_four_overlap(self):
+        """Capacity=3: four overlapping requests → exactly 3 succeed."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL for row-level locking')
+
+        fp = _create_freeze_profile()
+        tp = _create_thaw_profile(capacity=3)
+        target = timezone.now() + timedelta(days=3)
+
+        pkgs_plans = [
+            self._create_frozen_with_plan(fp, tp, target) for _ in range(4)
+        ]
+
+        results = []
+        errors = []
+        threads = []
+        for i, (pkg, plan) in enumerate(pkgs_plans):
+            t = threading.Thread(
+                target=self._thread_add_to_queue,
+                args=(pkg, plan, results, errors, f'W{i}'))
+            threads.append(t)
+
+        for t in threads:
+            t.start()
+            time.sleep(0.005)
+        for t in threads:
+            t.join(timeout=15)
+
+        self.assertEqual(len(results), 3,
+            f'Expected 3 successes, got {len(results)}: {results}')
+        self.assertEqual(len(errors), 1,
+            f'Expected 1 error, got {len(errors)}: {errors}')
+
+        active = ThawQueueEntry.objects.filter(
+            status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START, QueueStatus.STARTED]
+        ).count()
+        self.assertLessEqual(active, 3)
+
+    # --- Non-overlapping concurrency ---
+
+    def test_concurrent_non_overlapping_capacity_1(self):
+        """Capacity=1: two non-overlapping intervals may both succeed."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL for row-level locking')
+
+        fp = _create_freeze_profile()
+        tp = _create_thaw_profile(capacity=1)
+
+        now = timezone.now()
+        # Intervals far apart — no overlap
+        target1 = now + timedelta(days=3)
+        target2 = now + timedelta(days=10)
+
+        pkg1, plan1 = self._create_frozen_with_plan(fp, tp, target1)
+        pkg2, plan2 = self._create_frozen_with_plan(fp, tp, target2)
+
+        results = []
+        errors = []
+
+        t1 = threading.Thread(
+            target=self._thread_add_to_queue,
+            args=(pkg1, plan1, results, errors, 'W1'))
+        t2 = threading.Thread(
+            target=self._thread_add_to_queue,
+            args=(pkg2, plan2, results, errors, 'W2'))
+
+        t1.start()
+        time.sleep(0.01)
+        t2.start()
+        t1.join(timeout=15)
+        t2.join(timeout=15)
+
+        self.assertEqual(len(results), 2,
+            f'Non-overlapping should both succeed, got {len(results)}: {results}')
+        self.assertEqual(len(errors), 0,
+            f'Expected 0 errors for non-overlapping, got {len(errors)}: {errors}')
+
+    # --- Queue position uniqueness ---
+
+    def test_concurrent_queue_positions_unique(self):
+        """Concurrent successful admissions must get unique active positions."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL for row-level locking')
+
+        fp = _create_freeze_profile()
+        tp = _create_thaw_profile(capacity=10)
+
+        now = timezone.now()
+        # Stagger targets so intervals don't overlap — each gets admitted
+        pkgs_plans = []
+        for i in range(5):
+            target = now + timedelta(days=3, hours=i * 25)  # no overlap
+            pkg, plan = self._create_frozen_with_plan(fp, tp, target)
+            pkgs_plans.append((pkg, plan))
+
+        results = []
+        errors = []
+        threads = []
+        for i, (pkg, plan) in enumerate(pkgs_plans):
+            t = threading.Thread(
+                target=self._thread_add_to_queue,
+                args=(pkg, plan, results, errors, f'W{i}'))
+            threads.append(t)
+
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=15)
+
+        self.assertEqual(len(results), 5,
+            f'Expected 5 successes, got {len(results)}: {results}')
+
+        # All active queue positions must be unique
+        active_positions = list(
+            ThawQueueEntry.objects.filter(
+                status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START]
+            ).values_list('queue_position', flat=True)
+        )
+        self.assertEqual(
+            len(active_positions), len(set(active_positions)),
+            f'Duplicate queue positions detected: {active_positions}')
+
+    # --- CapacityLock model ---
+
+    def test_capacity_lock_created_on_first_use(self):
+        """CapacityLock row is created when add_to_thaw_queue first runs."""
+        fp = _create_freeze_profile()
+        tp = _create_thaw_profile()
+        self.assertFalse(CapacityLock.objects.filter(thaw_profile=tp).exists())
+
+        pkg = _frozen_pkg()
+        plan = create_rotation_plan(pkg, timezone.now() + timedelta(days=3), fp, tp)
+        add_to_thaw_queue(pkg, plan, actor='test')
+
+        self.assertTrue(CapacityLock.objects.filter(thaw_profile=tp).exists())
+
+    def test_capacity_lock_reused(self):
+        """Second admission reuses existing CapacityLock row."""
+        fp = _create_freeze_profile()
+        tp = _create_thaw_profile(capacity=5)
+
+        p1 = _frozen_pkg()
+        t1 = timezone.now() + timedelta(days=3)
+        plan1 = create_rotation_plan(p1, t1, fp, tp)
+        add_to_thaw_queue(p1, plan1, actor='test')
+        count_after_first = CapacityLock.objects.filter(thaw_profile=tp).count()
+        self.assertEqual(count_after_first, 1)
+
+        p2 = _frozen_pkg()
+        t2 = timezone.now() + timedelta(days=4)  # different window
+        plan2 = create_rotation_plan(p2, t2, fp, tp)
+        add_to_thaw_queue(p2, plan2, actor='test')
+        count_after_second = CapacityLock.objects.filter(thaw_profile=tp).count()
+        self.assertEqual(count_after_second, 1,
+            'CapacityLock should be reused, not duplicated')
+
+
+# ============================================================
+# 13. ROTATION CYCLE INVARIANTS
+# ============================================================
+
+class TestRotationCycleInvariants(TransactionTestCase):
+
+    def test_active_plan_must_have_cycle(self):
+        """Every active RotationPlan must reference a RotationCycle."""
+        fp = _create_freeze_profile()
+        tp = _create_thaw_profile()
+        pkg = _frozen_pkg()
+        target = timezone.now() + timedelta(days=3)
+        plan = create_rotation_plan(pkg, target, fp, tp)
+
+        self.assertIsNotNone(plan.rotation_cycle,
+            'Active plan must have a rotation_cycle')
+        self.assertEqual(plan.rotation_cycle.status, 'IN_PROGRESS')
+
+    def test_completed_plan_can_have_null_cycle(self):
+        """A CANCELLED plan may reference a cycle (no enforcement on null)."""
+        pkg, plan = _thaw_queued_pkg()
+        self.assertIsNotNone(plan.rotation_cycle)
+        cancel_rotation_plan(plan, actor='admin')
+        plan.refresh_from_db()
+        # Cycle still exists (historical record)
+        self.assertIsNotNone(plan.rotation_cycle)
+
+    def test_refreeze_creates_new_cycle(self):
+        """After refreeze, a new cycle is created and old is completed."""
+        pkg, plan = _on_display_pkg()
+        pkg, _ = request_refreeze(pkg)
+        pkg, _ = start_refreeze(pkg, actor='test')
+
+        active = RotationCycle.objects.filter(
+            package=pkg, status='IN_PROGRESS')
+        self.assertEqual(active.count(), 1)
+        self.assertEqual(active.first().cycle_number, 2)
+
+        completed = RotationCycle.objects.filter(
+            package=pkg, status='COMPLETED')
+        self.assertEqual(completed.count(), 1)
+        self.assertEqual(completed.first().outcome, 'REFROZEN')

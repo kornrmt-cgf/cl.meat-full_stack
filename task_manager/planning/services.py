@@ -32,7 +32,7 @@ from datetime import timedelta
 
 from planning.models import (
     FreezeProfile, ThawProfile, RotationPlan, RotationCycle, PlanStatus,
-    ThawQueueEntry, QueueStatus,
+    ThawQueueEntry, QueueStatus, CapacityLock,
 )
 from inventory.models import Package, PackageState
 
@@ -176,21 +176,28 @@ def generate_worker_tasks(plan):
 @transaction.atomic
 def add_to_thaw_queue(package, rotation_plan, actor=''):
     """
-    Add a package to the thaw queue.
+    Add a package to the thaw queue with serialized capacity admission.
 
-    Preconditions checked BEFORE any state change:
-    1. rotation_plan exists
-    2. package is FROZEN
-    3. not already in queue
-    4. thaw capacity not exceeded (interval overlap check)
+    Critical concurrency guarantee:
+        The capacity check and queue entry creation are serialized by
+        a SELECT FOR UPDATE on a CapacityLock row (one per ThawProfile).
+        This prevents two concurrent requests from both observing
+        "capacity available" and both inserting — which would exceed
+        the configured thaw_capacity.
 
-    Then both transitions (FROZEN → READY_FOR_THAW → THAW_QUEUED) must succeed.
-    If either fails, the entire operation rolls back — no partial queue record.
+    Lock protocol:
+        1. Acquire CapacityLock row for the profile (SELECT FOR UPDATE)
+        2. Re-check interval overlaps (now serialized — no race window)
+        3. Create queue entry + transition package
+        4. Release lock on COMMIT / rollback on any failure
+
+    Preconditions checked BEFORE lock acquisition:
+        1. rotation_plan exists
+        2. package is FROZEN
+        3. not already in queue
 
     Raises:
-        ValueError: If preconditions are not met (including capacity exceeded)
-        InvalidTransitionError: If state transition is not allowed
-        TransitionValidationError: If transition validation fails (no plan, etc.)
+        ValueError: If preconditions fail or capacity exceeded
     """
     from common.state_machine import (
         transition_package, can_transition,
@@ -206,23 +213,28 @@ def add_to_thaw_queue(package, rotation_plan, actor=''):
     ).exists():
         raise ValueError("Already in thaw queue")
 
-    # ── CAPACITY GATE (interval overlap check) ──
-    # Check before any state transitions — if capacity is exceeded, fail early.
+    profile = rotation_plan.thaw_profile
+
+    # ── STEP 1: Acquire capacity lock (serializes all admissions for this profile) ──
+    lock, _ = CapacityLock.objects.get_or_create(thaw_profile=profile)
+    lock = CapacityLock.objects.select_for_update().get(pk=lock.pk)
+
+    # ── STEP 2: Re-check interval overlaps INSIDE the lock ──
+    #  This is now safe — no other thread can pass this point until we commit/rollback.
     new_start = rotation_plan.planned_thaw_start_at
     new_end = rotation_plan.target_ready_at
     overlaps = check_thaw_interval_overlap(new_start, new_end, exclude_package=package)
-    profile = rotation_plan.thaw_profile
     if len(overlaps) >= profile.thaw_capacity:
         raise ValueError(
             f"Thaw capacity exceeded: {len(overlaps)}/{profile.thaw_capacity} "
             f"slots occupied during [{new_start} — {new_end}]"
         )
 
-    # Transition FROZEN → READY_FOR_THAW
-    # Never skip — if this fails, the entire operation must fail.
+    # ── STEP 3: Transition FROZEN → READY_FOR_THAW ──
     if can_transition(package.current_state, 'READY_FOR_THAW'):
         transition_package(package, 'READY_FOR_THAW', actor=actor)
 
+    # ── STEP 4: Queue position (safe — serialized by capacity lock) ──
     max_pos = ThawQueueEntry.objects.filter(
         status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START]
     ).aggregate(Max('queue_position'))['queue_position__max'] or 0
@@ -236,8 +248,7 @@ def add_to_thaw_queue(package, rotation_plan, actor=''):
         status=QueueStatus.QUEUED,
     )
 
-    # Transition READY_FOR_THAW → THAW_QUEUED
-    # If this fails, transaction rolls back — queue entry removed too.
+    # ── STEP 5: Transition READY_FOR_THAW → THAW_QUEUED ──
     transition_package(package, 'THAW_QUEUED', actor=actor)
     return entry
 

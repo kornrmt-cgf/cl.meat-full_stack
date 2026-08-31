@@ -282,6 +282,39 @@ class RotationPlan(models.Model):
 # QUEUE STATUS
 # ============================================================
 
+# ============================================================
+# CAPACITY LOCK (serialization primitive)
+# ============================================================
+
+class CapacityLock(models.Model):
+    """
+    Single-row-per-profile lock table for serializing thaw capacity admission.
+
+    Every concurrent add_to_thaw_queue() acquires a SELECT FOR UPDATE on this
+    row BEFORE reading interval overlaps.  This guarantees that the capacity
+    check and the subsequent queue-entry creation form a single atomic unit:
+    no two threads can both observe "capacity available" and both insert.
+
+    One row is created per ThawProfile on first use (get_or_create).
+    The row is never deleted; it is only used as a serialization point.
+    """
+
+    thaw_profile = models.OneToOneField(
+        ThawProfile, on_delete=models.PROTECT,
+        related_name='capacity_lock',
+        help_text='Profile whose capacity this lock serializes',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Capacity Lock'
+        verbose_name_plural = 'Capacity Locks'
+
+    def __str__(self):
+        return f"CapacityLock({self.thaw_profile.name})"
+
+
 class QueueStatus(models.TextChoices):
     QUEUED = 'QUEUED'
     READY_TO_START = 'READY_TO_START'
