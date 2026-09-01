@@ -195,17 +195,19 @@ def complete_task(task, worker=None, notes='', **kwargs):
     if worker is None:
         worker = kwargs.get('actor', None)
 
-    # Require a real User for task execution
-    _assert_user(worker)
-
     # Remember original object for in-place refresh at the end
     original_task = task
     task = WorkerTask.objects.select_for_update().get(pk=task.pk)
-    now = timezone.now()
 
-    # Idempotent: already completed
+    # Idempotent: already completed — read-only return, no mutation.
+    # This check is intentionally BEFORE _assert_user so that retrying
+    # a completed task does not reject the caller.
     if task.status == TaskStatus.COMPLETED:
         return {'task': task, 'transitions': []}
+
+    # Require a real User for task execution (only for non-completed tasks)
+    _assert_user(worker)
+    now = timezone.now()
 
     # Reject unsupported task types BEFORE any state mutation
     if task.task_type not in TASK_DISPATCH:
@@ -487,9 +489,13 @@ def cancel_tasks_for_plan(plan, actor='system', reason=''):
 def _assert_user(worker):
     """Validate that worker is a real Django User instance.
 
-    Raises ValueError for None, strings, or non-User objects.
-    Ownership authorization requires an actual User with a pk.
+    Uses the project's configured AUTH_USER_MODEL — not a hardcoded model.
+    Rejects None, strings, unsaved Users, and any non-User model
+    (even if it has a pk).
     """
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+
     if worker is None:
         raise ValueError(
             "Worker identity is required. Cannot operate without a User."
@@ -499,9 +505,14 @@ def _assert_user(worker):
             f"String actor '{worker}' cannot be used for operational ownership. "
             f"A real Django User instance is required."
         )
-    if not hasattr(worker, 'pk') or worker.pk is None:
+    if not isinstance(worker, User):
         raise ValueError(
-            f"Worker must be a saved Django User instance with a pk."
+            f"Worker must be a {User.__name__} instance, "
+            f"got {type(worker).__name__}."
+        )
+    if worker.pk is None:
+        raise ValueError(
+            f"Worker must be a saved {User.__name__} instance with a pk."
         )
 
 

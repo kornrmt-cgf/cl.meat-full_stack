@@ -838,3 +838,156 @@ class TestExecutionExactlyOnce(TransactionTestCase):
         # TASK_COMPLETED events may be 1 or 2 due to the commit window race,
         # but the critical invariant is: lifecycle dispatch called at most once
         # and package state transitioned exactly once (already asserted above).
+
+
+# ============================================================
+# 11. USER TYPE VALIDATION (real PostgreSQL)
+# ============================================================
+
+class TestUserTypeValidation(TransactionTestCase):
+    """
+    Prove that only the configured AUTH_USER_MODEL can own tasks.
+    Arbitrary models with pk, unsaved Users, strings — all rejected.
+    """
+
+    def _is_pg(self):
+        from django.db import connection
+        return connection.vendor == 'postgresql'
+
+    def test_non_user_model_with_pk_rejected(self):
+        """A Package (non-User model with pk) cannot claim a task."""
+        pkg = _create_pkg()
+        plan = create_rotation_plan(
+            pkg, timezone.now() + timedelta(days=3),
+            _create_freeze_profile(), _create_thaw_profile())
+        task = _create_task(pkg, plan)
+
+        # pkg is a Package instance with a pk — should be rejected
+        with self.assertRaises(ValueError) as ctx:
+            claim_task(task, pkg)
+        self.assertIn('Package', str(ctx.exception))
+
+    def test_non_user_model_start_rejected(self):
+        """A Batch (non-User model with pk) cannot start a task."""
+        pkg = _create_pkg()
+        plan = create_rotation_plan(
+            pkg, timezone.now() + timedelta(days=3),
+            _create_freeze_profile(), _create_thaw_profile())
+        task = _create_task(pkg, plan)
+        user_a = _get_or_create_worker('utype_a')
+        claimed = claim_task(task, user_a)
+
+        batch = _create_batch()
+        with self.assertRaises(ValueError) as ctx:
+            start_task(claimed, batch)
+        self.assertIn('Batch', str(ctx.exception))
+
+    def test_non_user_model_complete_rejected(self):
+        """A Product (non-User model with pk) cannot complete a task."""
+        pkg = _create_pkg()
+        plan = create_rotation_plan(
+            pkg, timezone.now() + timedelta(days=3),
+            _create_freeze_profile(), _create_thaw_profile())
+        task = _create_task(pkg, plan, TaskType.FREEZE_START)
+        user_a = _get_or_create_worker('utype_b')
+        claimed = claim_task(task, user_a)
+        started = start_task(claimed, user_a)
+
+        prod = _create_prod()
+        with self.assertRaises(ValueError) as ctx:
+            complete_task(started, prod)
+        self.assertIn('Product', str(ctx.exception))
+
+    def test_unsaved_user_rejected(self):
+        """An unsaved User (pk=None) cannot claim a task."""
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+
+        pkg = _create_pkg()
+        plan = create_rotation_plan(
+            pkg, timezone.now() + timedelta(days=3),
+            _create_freeze_profile(), _create_thaw_profile())
+        task = _create_task(pkg, plan)
+
+        unsaved = User(userid='ghost', email='ghost@test.local')
+        self.assertIsNone(unsaved.pk)
+
+        with self.assertRaises(ValueError) as ctx:
+            claim_task(task, unsaved)
+        self.assertIn('saved', str(ctx.exception))
+
+    def test_saved_user_accepted(self):
+        """A saved User with pk is accepted."""
+        pkg = _create_pkg()
+        plan = create_rotation_plan(
+            pkg, timezone.now() + timedelta(days=3),
+            _create_freeze_profile(), _create_thaw_profile())
+        task = _create_task(pkg, plan)
+        user = _get_or_create_worker('saved_user')
+
+        claimed = claim_task(task, user)
+        claimed.refresh_from_db()
+        self.assertEqual(claimed.status, TaskStatus.CLAIMED)
+        self.assertEqual(claimed.claimed_by_id, user.pk)
+
+    def test_completed_task_idempotent_read_only(self):
+        """Retrying a COMPLETED task returns existing result, no mutation."""
+        pkg = _create_pkg()  # PACKED for FREEZE_START
+        fp = _create_freeze_profile()
+        tp = _create_thaw_profile()
+        plan = create_rotation_plan(
+            pkg, timezone.now() + timedelta(days=3), fp, tp)
+        task = _create_task(pkg, plan, TaskType.FREEZE_START)
+        user_a = _get_or_create_worker('idemp_a')
+        claimed = claim_task(task, user_a)
+        started = start_task(claimed, user_a)
+        result1 = complete_task(started, user_a)
+
+        # Record state after first completion
+        result1['task'].refresh_from_db()
+        first_completed_at = result1['task'].completed_at
+        first_completed_by = result1['task'].completed_by_id
+        pkg.refresh_from_db()
+        first_state = pkg.current_state
+
+        # Retry with a different User — must be idempotent read-only
+        user_b = _get_or_create_worker('idemp_b')
+        result2 = complete_task(result1['task'], user_b)
+
+        # Return: same task, empty transitions
+        self.assertEqual(result2['task'].status, TaskStatus.COMPLETED)
+        self.assertEqual(result2['transitions'], [])
+
+        # No mutation: completed_at unchanged
+        result2['task'].refresh_from_db()
+        self.assertEqual(result2['task'].completed_at, first_completed_at)
+        self.assertEqual(result2['task'].completed_by_id, first_completed_by)
+
+        # No mutation: package state unchanged
+        pkg.refresh_from_db()
+        self.assertEqual(pkg.current_state, first_state)
+
+        # Count events BEFORE the retry
+        events_before_retry = TaskEvent.objects.filter(task=task).count()
+
+        # Retry with a different User — must be idempotent read-only
+        user_b = _get_or_create_worker('idemp_b')
+        result2 = complete_task(result1['task'], user_b)
+
+        # Verify no new events were created by the retry
+        events_after_retry = TaskEvent.objects.filter(task=task).count()
+        self.assertEqual(events_before_retry, events_after_retry,
+            f'Retry created {events_after_retry - events_before_retry} new events — expected 0')
+
+        # Return: same task, empty transitions
+        self.assertEqual(result2['task'].status, TaskStatus.COMPLETED)
+        self.assertEqual(result2['transitions'], [])
+
+        # No mutation: completed_at unchanged
+        result2['task'].refresh_from_db()
+        self.assertEqual(result2['task'].completed_at, first_completed_at)
+        self.assertEqual(result2['task'].completed_by_id, first_completed_by)
+
+        # No mutation: package state unchanged
+        pkg.refresh_from_db()
+        self.assertEqual(pkg.current_state, first_state)
