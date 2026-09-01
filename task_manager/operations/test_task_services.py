@@ -128,6 +128,16 @@ def _on_display_pkg():
     pkg, _ = move_to_display(pkg, actor='test')
     return pkg, plan
 
+def _get_or_create_worker(userid='testworker'):
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+    user, _ = User.objects.get_or_create(
+        userid=userid,
+        defaults={'is_active': True, 'email': f'{userid}@test.local'}
+    )
+    return user
+
+
 def _create_task(pkg, plan, task_type=TaskType.FREEZE_START):
     """Create a WorkerTask directly (for testing)."""
     return WorkerTask.objects.create(
@@ -151,10 +161,10 @@ class TestTaskStateTransitions(TransactionTestCase):
             _create_freeze_profile(), _create_thaw_profile())
         task = _create_task(pkg, plan)
 
-        claimed = claim_task(task, 'worker1')
+        claimed = claim_task(task, _get_or_create_worker('worker1'))
         claimed.refresh_from_db()
         self.assertEqual(claimed.status, TaskStatus.CLAIMED)
-        self.assertEqual(claimed.claimed_by, None)  # string worker
+        self.assertEqual(claimed.claimed_by, _get_or_create_worker('worker1'))
         self.assertIsNotNone(claimed.claimed_at)
 
     def test_claimed_to_in_progress(self):
@@ -163,9 +173,9 @@ class TestTaskStateTransitions(TransactionTestCase):
             pkg, timezone.now() + timedelta(days=3),
             _create_freeze_profile(), _create_thaw_profile())
         task = _create_task(pkg, plan)
-        claimed = claim_task(task, 'worker1')
+        claimed = claim_task(task, _get_or_create_worker('worker1'))
 
-        started = start_task(claimed, 'worker1')
+        started = start_task(claimed, _get_or_create_worker('worker1'))
         started.refresh_from_db()
         self.assertEqual(started.status, TaskStatus.IN_PROGRESS)
         self.assertIsNotNone(started.started_at)
@@ -179,9 +189,9 @@ class TestTaskStateTransitions(TransactionTestCase):
 
         # Create and execute FREEZE_START task
         task = _create_task(pkg, plan, TaskType.FREEZE_START)
-        claimed = claim_task(task, 'w1')
-        started = start_task(claimed, 'w1')
-        result = complete_task(started, 'w1')
+        claimed = claim_task(task, _get_or_create_worker('w1'))
+        started = start_task(claimed, _get_or_create_worker('w1'))
+        result = complete_task(started, _get_or_create_worker('w1'))
 
         result['task'].refresh_from_db()
         self.assertEqual(result['task'].status, TaskStatus.COMPLETED)
@@ -199,7 +209,7 @@ class TestTaskStateTransitions(TransactionTestCase):
             _create_freeze_profile(), _create_thaw_profile())
         task = _create_task(pkg, plan)
 
-        cancelled = cancel_task(task, 'admin', reason='Not needed')
+        cancelled = cancel_task(task, _get_or_create_worker('admin'), reason='Not needed')
         cancelled.refresh_from_db()
         self.assertEqual(cancelled.status, TaskStatus.CANCELLED)
         self.assertIsNotNone(cancelled.cancelled_at)
@@ -210,9 +220,9 @@ class TestTaskStateTransitions(TransactionTestCase):
             pkg, timezone.now() + timedelta(days=3),
             _create_freeze_profile(), _create_thaw_profile())
         task = _create_task(pkg, plan)
-        claimed = claim_task(task, 'w1')
+        claimed = claim_task(task, _get_or_create_worker('w1'))
 
-        cancelled = cancel_task(claimed, 'admin')
+        cancelled = cancel_task(claimed, _get_or_create_worker('admin'))
         cancelled.refresh_from_db()
         self.assertEqual(cancelled.status, TaskStatus.CANCELLED)
 
@@ -223,12 +233,12 @@ class TestTaskStateTransitions(TransactionTestCase):
         plan = create_rotation_plan(
             pkg, timezone.now() + timedelta(days=3), fp, tp)
         task = _create_task(pkg, plan, TaskType.FREEZE_START)
-        claimed = claim_task(task, 'w1')
-        started = start_task(claimed, 'w1')
-        complete_task(started, 'w1')
+        claimed = claim_task(task, _get_or_create_worker('w1'))
+        started = start_task(claimed, _get_or_create_worker('w1'))
+        complete_task(started, _get_or_create_worker('w1'))
 
         with self.assertRaises(ValueError):
-            claim_task(task, 'w2')
+            claim_task(task, _get_or_create_worker('w2'))
 
 
 # ============================================================
@@ -257,7 +267,7 @@ class TestClaimConcurrency(TransactionTestCase):
 
         def worker(name):
             try:
-                claimed = claim_task(task, name)
+                claimed = claim_task(task, _get_or_create_worker(name))
                 results.append(name)
             except Exception as e:
                 errors.append((name, str(e)))
@@ -277,7 +287,11 @@ class TestClaimConcurrency(TransactionTestCase):
         self.assertEqual(task.status, TaskStatus.CLAIMED)
 
     def test_two_workers_execute_same_task(self):
-        """Exactly 1 lifecycle execution, 1 idempotent no-op."""
+        """Exactly 1 lifecycle execution, 1 idempotent no-op.
+
+        Both threads use the same claimant worker — ownership is correct.
+        The first to complete wins; second gets idempotent COMPLETED.
+        """
         if not self._is_pg():
             self.skipTest('Requires PostgreSQL')
 
@@ -287,21 +301,22 @@ class TestClaimConcurrency(TransactionTestCase):
         plan = create_rotation_plan(
             pkg, timezone.now() + timedelta(days=3), fp, tp)
         task = _create_task(pkg, plan, TaskType.FREEZE_START)
-        claimed = claim_task(task, 'setup')
-        started = start_task(claimed, 'setup')
+        worker_user = _get_or_create_worker('executor')
+        claimed = claim_task(task, worker_user)
+        started = start_task(claimed, worker_user)
 
         results = []
         errors = []
 
-        def worker(name):
+        def do_complete():
             try:
-                result = complete_task(started, name)
-                results.append(name)
+                result = complete_task(started, worker_user)
+                results.append('ok')
             except Exception as e:
-                errors.append((name, str(e)))
+                errors.append(str(e))
 
-        t1 = threading.Thread(target=worker, args=('W1',))
-        t2 = threading.Thread(target=worker, args=('W2',))
+        t1 = threading.Thread(target=do_complete)
+        t2 = threading.Thread(target=do_complete)
         t1.start()
         time.sleep(0.01)
         t2.start()
@@ -346,14 +361,14 @@ class TestCancelVsClaim(TransactionTestCase):
 
         def do_claim():
             try:
-                claim_task(task, 'worker')
+                claim_task(task, _get_or_create_worker('worker'))
                 results.append('claim')
             except Exception as e:
                 errors.append(('claim', str(e)))
 
         def do_cancel():
             try:
-                cancel_task(task, 'admin')
+                cancel_task(task, _get_or_create_worker('admin'))
                 results.append('cancel')
             except Exception as e:
                 errors.append(('cancel', str(e)))
@@ -401,7 +416,7 @@ class TestStaleDetection(TransactionTestCase):
 
         # Transition package to FREEZING
         from common.state_machine import transition_package
-        transition_package(pkg, 'FREEZING', actor='x')
+        transition_package(pkg, 'FREEZING', actor=_get_or_create_worker('x'))
 
         # Verify DB state is FREEZING
         pkg_db = Package.objects.get(pk=pkg.pk)
@@ -425,7 +440,7 @@ class TestStaleDetection(TransactionTestCase):
         task = _create_task(pkg, plan, TaskType.FREEZE_START)
 
         # Move package to FREEZING
-        start_freeze(pkg, actor='x')
+        start_freeze(pkg, actor=_get_or_create_worker('x'))
 
         # Task is now stale
         from operations.services import _is_stale
@@ -446,12 +461,12 @@ class TestIdempotentRetry(TransactionTestCase):
         plan = create_rotation_plan(
             pkg, timezone.now() + timedelta(days=3), fp, tp)
         task = _create_task(pkg, plan, TaskType.FREEZE_START)
-        claimed = claim_task(task, 'w1')
-        started = start_task(claimed, 'w1')
-        result1 = complete_task(started, 'w1')
+        claimed = claim_task(task, _get_or_create_worker('w1'))
+        started = start_task(claimed, _get_or_create_worker('w1'))
+        result1 = complete_task(started, _get_or_create_worker('w1'))
 
         # Second complete — should be idempotent
-        result2 = complete_task(result1['task'], 'w1')
+        result2 = complete_task(result1['task'], _get_or_create_worker('w1'))
         self.assertEqual(result2['task'].status, TaskStatus.COMPLETED)
         self.assertEqual(result2['transitions'], [])  # no re-execution
 
@@ -482,9 +497,9 @@ class TestTaskPackageConsistency(TransactionTestCase):
 
         for task_type, expected_state in tasks_spec:
             task = _create_task(pkg, plan, task_type)
-            claimed = claim_task(task, 'worker')
-            started = start_task(claimed, 'worker')
-            result = complete_task(started, 'worker')
+            claimed = claim_task(task, _get_or_create_worker('worker'))
+            started = start_task(claimed, _get_or_create_worker('worker'))
+            result = complete_task(started, _get_or_create_worker('worker'))
 
             pkg.refresh_from_db()
             self.assertEqual(pkg.current_state, expected_state,
@@ -501,15 +516,15 @@ class TestTaskPackageConsistency(TransactionTestCase):
             _create_freeze_profile(), _create_thaw_profile())
         task = _create_task(pkg, plan)
 
-        claim_task(task, 'w1')
+        claim_task(task, _get_or_create_worker('w1'))
         events = TaskEvent.objects.filter(task=task)
         self.assertTrue(events.filter(event_type='TASK_CLAIMED').exists())
 
-        start_task(task, 'w1')
+        start_task(task, _get_or_create_worker('w1'))
         events = TaskEvent.objects.filter(task=task)
         self.assertTrue(events.filter(event_type='TASK_STARTED').exists())
 
-        cancel_task(task, 'admin', reason='test')
+        cancel_task(task, _get_or_create_worker('admin'), reason='test')
         events = TaskEvent.objects.filter(task=task)
         self.assertTrue(events.filter(event_type='TASK_CANCELLED').exists())
 
@@ -534,9 +549,9 @@ class TestCancelTasksForPlan(TransactionTestCase):
         t3 = _create_task(pkg, plan, TaskType.THAW_START)
 
         # Claim one
-        claim_task(t1, 'w1')
+        claim_task(t1, _get_or_create_worker('w1'))
 
-        cancel_tasks_for_plan(plan, actor='admin')
+        cancel_tasks_for_plan(plan, actor=_get_or_create_worker('admin'))
 
         # All 3 tasks for this plan must be cancelled
         for t in [t1, t2, t3]:
@@ -577,6 +592,6 @@ class TestTaskDiscovery(TransactionTestCase):
         self.assertIn(t3.pk, pks)
 
         # Claimed task should not appear
-        claim_task(t1, 'w1')
+        claim_task(t1, _get_or_create_worker('w1'))
         tasks_after = list(get_available_tasks())
         self.assertNotIn(t1.pk, [t.pk for t in tasks_after])

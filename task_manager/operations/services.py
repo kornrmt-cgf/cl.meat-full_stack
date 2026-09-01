@@ -71,6 +71,11 @@ def claim_task(task, worker):
     Uses SELECT FOR UPDATE on the task row to serialize concurrent claims.
     Exactly one worker can claim a given task.
 
+    Invariant: CLAIMED tasks always have claimed_by assigned.
+    For User instances, claimed_by is set to the User.
+    For string identifiers, claimed_by stays NULL but the actor
+    is recorded in the TASK_CLAIMED event.
+
     Args:
         task: WorkerTask instance (or pk — will be re-fetched)
         worker: User instance or string identifier
@@ -93,6 +98,7 @@ def claim_task(task, worker):
     task.status = TaskStatus.CLAIMED
     task.claimed_at = now
 
+    # Assign claimant — User instances get claimed_by FK set
     if hasattr(worker, 'pk'):
         task.claimed_by = worker
 
@@ -114,6 +120,7 @@ def start_task(task, worker):
     Transition a CLAIMED task to IN_PROGRESS.
 
     Only the claiming worker may start the task.
+    CLAIMED tasks must have claimed_by assigned.
 
     Args:
         task: WorkerTask instance
@@ -123,7 +130,8 @@ def start_task(task, worker):
         WorkerTask
 
     Raises:
-        ValueError: if task is not in CLAIMED state or wrong worker
+        ValueError: if task is not in CLAIMED state, has no claimant,
+                     or is claimed by a different worker
     """
     task = WorkerTask.objects.select_for_update().get(pk=task.pk)
 
@@ -132,8 +140,14 @@ def start_task(task, worker):
             f"Cannot start task: status is {task.status}, expected CLAIMED"
         )
 
+    # CLAIMED tasks must have a claimant
+    if not task.claimed_by_id:
+        raise ValueError(
+            "Cannot start task: CLAIMED task has no claimant"
+        )
+
     # Verify same worker who claimed
-    if hasattr(worker, 'pk') and task.claimed_by_id and task.claimed_by_id != worker.pk:
+    if hasattr(worker, 'pk') and task.claimed_by_id != worker.pk:
         raise ValueError(
             "Cannot start task: claimed by different worker"
         )
@@ -185,19 +199,45 @@ def complete_task(task, worker=None, notes='', **kwargs):
     if task.status == TaskStatus.COMPLETED:
         return {'task': task, 'transitions': []}
 
+    # Reject unsupported task types BEFORE any state mutation
+    if task.task_type not in TASK_DISPATCH:
+        raise ValueError(
+            f"Cannot complete task: no handler for task type {task.task_type}"
+        )
+
     # Backward compat: auto-claim and auto-start PENDING tasks
     if task.status == TaskStatus.PENDING:
         task.status = TaskStatus.CLAIMED
         task.claimed_at = now
-        task.claimed_by = worker if hasattr(worker, 'pk') else None
-        task.status = TaskStatus.IN_PROGRESS
-        task.started_at = now
-        task.save(update_fields=['status', 'claimed_by', 'claimed_at', 'started_at', 'updated_at'])
-    elif task.status == TaskStatus.CLAIMED:
+        if hasattr(worker, 'pk'):
+            task.claimed_by = worker
+        task.save(update_fields=['status', 'claimed_by', 'claimed_at', 'updated_at'])
+        _log_event(task, 'TASK_CLAIMED', actor=_actor_name(worker))
+
         task.status = TaskStatus.IN_PROGRESS
         task.started_at = now
         task.save(update_fields=['status', 'started_at', 'updated_at'])
-    elif task.status != TaskStatus.IN_PROGRESS:
+        _log_event(task, 'TASK_STARTED', actor=_actor_name(worker))
+
+    elif task.status == TaskStatus.CLAIMED:
+        # Ownership: only the claimant may execute
+        if hasattr(worker, 'pk') and task.claimed_by_id and task.claimed_by_id != worker.pk:
+            raise ValueError(
+                "Cannot complete task: claimed by different worker"
+            )
+        task.status = TaskStatus.IN_PROGRESS
+        task.started_at = now
+        task.save(update_fields=['status', 'started_at', 'updated_at'])
+        _log_event(task, 'TASK_STARTED', actor=_actor_name(worker))
+
+    elif task.status == TaskStatus.IN_PROGRESS:
+        # Ownership: only the claimant may complete
+        if hasattr(worker, 'pk') and task.claimed_by_id and task.claimed_by_id != worker.pk:
+            raise ValueError(
+                "Cannot complete task: claimed by different worker"
+            )
+
+    else:
         raise ValueError(
             f"Cannot complete task: status is {task.status}"
         )
@@ -336,10 +376,16 @@ def _expected_package_state(task_type):
 # ============================================================
 
 def _dispatch(task, worker):
-    """Dispatch task to the appropriate lifecycle service."""
+    """Dispatch task to the appropriate lifecycle service.
+
+    Raises ValueError for unsupported task types — never silently succeeds.
+    """
     handler_name = TASK_DISPATCH.get(task.task_type)
     if handler_name is None:
-        return []  # task types without lifecycle dispatch
+        raise ValueError(
+            f"No lifecycle handler for task type: {task.task_type}. "
+            f"Task cannot be completed without a dispatch handler."
+        )
 
     handler = globals()[handler_name]
     return handler(task, worker)
