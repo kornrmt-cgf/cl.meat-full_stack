@@ -73,8 +73,15 @@ SUPPORTED_TASK_TYPES = set(services.TASK_DISPATCH.keys())
 TASK_ORDERING = ['scheduled_at', 'created_at', 'pk']
 
 
+GENERIC_THAI_ERROR = 'เกิดข้อผิดพลาดในการดำเนินงาน กรุณาลองใหม่อีกครั้ง'
+
+
 def _thai_error(error_msg):
-    """Convert backend errors to Thai UX messages."""
+    """Convert backend errors to Thai UX messages.
+
+    Never fall back to raw backend exception text.
+    Unknown errors return a generic Thai message.
+    """
     mapping = {
         'claimed by different worker': 'งานนี้ถูกพนักงานคนอื่นรับไปแล้ว',
         'status is': 'สถานะงานไม่ถูกต้อง',
@@ -86,14 +93,16 @@ def _thai_error(error_msg):
         'Cannot start task': 'ไม่สามารถเริ่มงานนี้ได้',
         'Cannot complete task': 'ไม่สามารถเสร็จงานนี้ได้',
         'Cannot cancel task': 'ไม่สามารถยกเลิกงานนี้ได้',
+        'cancel only by claimant': 'เฉพาะผู้รับงานเท่านั้นที่สามารถยกเลิกงานนี้ได้',
         'String actor': 'ไม่สามารถใช้ข้อมูลนี้เป็นผู้รับงานได้',
         'must be a saved': 'ผู้รับงานต้องเป็นผู้ใช้ที่บันทึกไว้แล้ว',
         'must be a ': 'ผู้รับงานต้องเป็นผู้ใช้ที่ถูกต้อง',
     }
+    msg = str(error_msg)
     for key, thai_msg in mapping.items():
-        if key.lower() in str(error_msg).lower():
+        if key.lower() in msg.lower():
             return thai_msg
-    return str(error_msg)
+    return GENERIC_THAI_ERROR
 
 
 # ============================================================
@@ -271,11 +280,25 @@ class WorkerCompleteTaskView(LoginRequiredMixin, View):
 # ============================================================
 
 class WorkerCancelTaskView(LoginRequiredMixin, View):
-    """ยกเลิกงาน — POST request"""
+    """ยกเลิกงาน — POST request
+
+    PENDING tasks: anyone may cancel.
+    CLAIMED / IN_PROGRESS tasks: only the claimant may cancel.
+    """
 
     def post(self, request, pk):
         task = get_object_or_404(WorkerTask, pk=pk)
         reason = request.POST.get('reason', '')
+
+        # Ownership check for CLAIMED / IN_PROGRESS tasks
+        if task.status in [TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS]:
+            if task.claimed_by_id != request.user.pk:
+                messages.error(
+                    request,
+                    '❌ เฉพาะผู้รับงานเท่านั้นที่สามารถยกเลิกงานนี้ได้'
+                )
+                return redirect('operations:task-detail', pk=task.pk)
+
         try:
             services.cancel_task(task, actor=request.user, reason=reason)
             messages.info(request, 'ℹ️ ยกเลิกงานแล้ว')
@@ -313,63 +336,80 @@ class WorkerTaskHistoryView(LoginRequiredMixin, ListView):
 # ============================================================
 
 class BarcodeScanView(LoginRequiredMixin, View):
-    """AJAX endpoint สำหรับสแกนบาร์โค้ด"""
+    """AJAX endpoint สำหรับสแกนบาร์โค้ด
+
+    Security:
+    - task_id is required (never expose arbitrary package data)
+    - Only IN_PROGRESS tasks may be scanned
+    - Only the claimant may scan
+    - Barcode must match task.package_id
+    """
 
     def post(self, request):
         barcode = request.POST.get('barcode', '').strip()
         task_id = request.POST.get('task_id')
+
+        # task_id is required — never allow arbitrary package lookup
+        if not task_id:
+            return JsonResponse({
+                'success': False,
+                'error': 'กรุณาระบุรายการงาน'
+            }, status=400)
 
         if not barcode:
             return JsonResponse({
                 'success': False, 'error': 'กรุณากรอกบาร์โค้ด'
             }, status=400)
 
-        # Find package
+        # Load and validate the task
         try:
-            package = Package.objects.select_related(
-                'product', 'product__category', 'batch', 'batch__supplier',
-                'storage_location',
-            ).get(barcode=barcode)
-        except Package.DoesNotExist:
+            task = WorkerTask.objects.select_related(
+                'package', 'claimed_by',
+            ).get(pk=task_id)
+        except WorkerTask.DoesNotExist:
             return JsonResponse({
-                'success': False, 'error': 'ไม่พบบาร์โค้ดนี้ในระบบ'
+                'success': False, 'error': 'ไม่พบงานนี้'
             }, status=404)
 
-        result = {
+        # Only IN_PROGRESS tasks may be scanned
+        if task.status != TaskStatus.IN_PROGRESS:
+            return JsonResponse({
+                'success': False,
+                'error': 'ไม่สามารถสแกนบาร์โค้ดได้ เนื่องจากงานยังไม่ได้เริ่มทำงาน'
+            }, status=400)
+
+        # Only the claimant may scan
+        if task.claimed_by_id != request.user.pk:
+            return JsonResponse({
+                'success': False,
+                'error': 'เฉพาะผู้รับงานเท่านั้นที่สามารถสแกนบาร์โค้ดได้'
+            }, status=403)
+
+        # Barcode must match the task's package
+        if task.package.barcode != barcode:
+            return JsonResponse({
+                'success': False,
+                'error': 'บาร์โค้ดไม่ตรงกับรายการงาน'
+            }, status=400)
+
+        # Return minimal package data (no arbitrary lookup)
+        pkg = task.package
+        return JsonResponse({
             'success': True,
+            'task_match': True,
             'package': {
-                'id': package.pk,
-                'barcode': package.barcode,
-                'product_name': package.product.display_name,
-                'product_sku': package.product.sku,
-                'category': package.product.category.name if package.product.category else '',
-                'weight': str(package.weight),
-                'selling_price': str(package.selling_price),
-                'state': package.get_current_state_display(),
-                'state_code': package.current_state,
-                'storage_location': str(package.storage_location) if package.storage_location else '',
-                'batch_number': package.batch.batch_number if package.batch else '',
-                'supplier': package.batch.supplier.name if package.batch and package.batch.supplier else '',
-            }
-        }
-
-        # If task_id provided, validate match
-        if task_id:
-            try:
-                task = WorkerTask.objects.get(pk=task_id)
-                if task.package_id != package.pk:
-                    return JsonResponse({
-                        'success': False,
-                        'error': 'บาร์โค้ดไม่ตรงกับรายการงาน',
-                        'package': result['package'],
-                    }, status=400)
-                result['task_match'] = True
-            except WorkerTask.DoesNotExist:
-                return JsonResponse({
-                    'success': False, 'error': 'ไม่พบงานนี้'
-                }, status=404)
-
-        return JsonResponse(result)
+                'id': pkg.pk,
+                'barcode': pkg.barcode,
+                'product_name': pkg.product.display_name,
+                'product_sku': pkg.product.sku,
+                'category': pkg.product.category.name if pkg.product.category else '',
+                'weight': str(pkg.weight),
+                'selling_price': str(pkg.selling_price),
+                'state': pkg.get_current_state_display(),
+                'state_code': pkg.current_state,
+                'storage_location': str(pkg.storage_location) if pkg.storage_location else '',
+            },
+        })
 
 
 # ============================================================

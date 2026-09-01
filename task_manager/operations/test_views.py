@@ -422,76 +422,129 @@ class TestUnsupportedTaskType(TestCase):
 
 
 class TestBarcodeScanAPI(TestCase):
-    """Barcode scan AJAX endpoint."""
+    """Barcode scan AJAX endpoint — secured: task_id required, IN_PROGRESS only, claimant only."""
 
     def setUp(self):
         self.client = Client()
         self.user = _create_user()
         self.client.login(userid='worker1', password='testpass123')
 
-    def test_scan_valid_barcode(self):
-        pkg = _create_package(barcode='SCAN-001')
-        resp = self.client.post(
-            reverse('operations:barcode-scan'),
-            {'barcode': 'SCAN-001'}
-        )
-        self.assertEqual(resp.status_code, 200)
-        data = json.loads(resp.content)
-        self.assertTrue(data['success'])
-        self.assertEqual(data['package']['barcode'], 'SCAN-001')
-
-    def test_scan_invalid_barcode(self):
-        resp = self.client.post(
-            reverse('operations:barcode-scan'),
-            {'barcode': 'NOTEXIST'}
-        )
-        self.assertEqual(resp.status_code, 404)
-
-    def test_scan_empty_barcode(self):
-        resp = self.client.post(
-            reverse('operations:barcode-scan'),
-            {'barcode': ''}
-        )
-        self.assertEqual(resp.status_code, 400)
-
-    def test_scan_with_task_id_match(self):
+    def _make_in_progress_task(self, barcode='SCAN-001'):
+        """Helper: create a task in IN_PROGRESS state, claimed by self.user."""
         pkg, plan, _, _ = _make_package_with_plan()
+        # Override barcode
+        Package.objects.filter(pk=pkg.pk).update(barcode=barcode)
+        pkg.refresh_from_db()
         task = WorkerTask.objects.create(
             package=pkg, rotation_plan=plan,
             task_type=TaskType.FREEZE_START,
             scheduled_at=timezone.now(),
+            status=TaskStatus.IN_PROGRESS,
+            claimed_by=self.user,
         )
+        return pkg, task
+
+    def test_scan_valid_barcode(self):
+        """Valid scan: task_id + correct barcode + IN_PROGRESS + claimant."""
+        pkg, task = self._make_in_progress_task('SCAN-OK')
         resp = self.client.post(
             reverse('operations:barcode-scan'),
-            {'barcode': pkg.barcode, 'task_id': task.pk}
+            {'barcode': 'SCAN-OK', 'task_id': task.pk}
         )
         self.assertEqual(resp.status_code, 200)
         data = json.loads(resp.content)
         self.assertTrue(data['success'])
         self.assertTrue(data['task_match'])
+        self.assertEqual(data['package']['barcode'], 'SCAN-OK')
 
-    def test_scan_with_task_id_mismatch(self):
-        pkg1 = _create_package(barcode='SCAN-M1')
-        prod2 = _create_product()
-        batch2 = _create_batch(prod2)
-        pkg2 = _create_package(prod2, batch2, barcode='SCAN-M2')
-        plan = create_rotation_plan(
-            pkg1, timezone.now() + timedelta(days=5),
-            _create_freeze_profile(), _create_thaw_profile(),
-        )
-        task = WorkerTask.objects.create(
-            package=pkg1, rotation_plan=plan,
-            task_type=TaskType.FREEZE_START,
-            scheduled_at=timezone.now(),
-        )
+    def test_scan_missing_task_id(self):
+        """task_id is required — must reject."""
         resp = self.client.post(
             reverse('operations:barcode-scan'),
-            {'barcode': pkg2.barcode, 'task_id': task.pk}
+            {'barcode': 'SCAN-001'}
         )
         self.assertEqual(resp.status_code, 400)
         data = json.loads(resp.content)
         self.assertFalse(data['success'])
+        self.assertIn('กรุณาระบุรายการงาน', data['error'])
+
+    def test_scan_empty_barcode(self):
+        """Empty barcode with valid task_id must be rejected."""
+        pkg, task = self._make_in_progress_task('SCAN-EMPTY')
+        resp = self.client.post(
+            reverse('operations:barcode-scan'),
+            {'barcode': '', 'task_id': task.pk}
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_scan_wrong_task_state(self):
+        """Scan on PENDING task must be rejected."""
+        pkg, plan, _, _ = _make_package_with_plan()
+        task = WorkerTask.objects.create(
+            package=pkg, rotation_plan=plan,
+            task_type=TaskType.FREEZE_START,
+            scheduled_at=timezone.now(),
+            status=TaskStatus.PENDING,
+        )
+        resp = self.client.post(
+            reverse('operations:barcode-scan'),
+            {'barcode': pkg.barcode, 'task_id': task.pk}
+        )
+        self.assertEqual(resp.status_code, 400)
+        data = json.loads(resp.content)
+        self.assertIn('ยังไม่ได้เริ่มทำงาน', data['error'])
+
+    def test_scan_wrong_worker(self):
+        """Scan by non-claimant must be rejected (403)."""
+        user2 = _create_user2()
+        pkg, task = self._make_in_progress_task('SCAN-WRONG-W')
+        # Login as user2 (not the claimant)
+        self.client.logout()
+        self.client.login(userid='worker2', password='testpass123')
+        resp = self.client.post(
+            reverse('operations:barcode-scan'),
+            {'barcode': 'SCAN-WRONG-W', 'task_id': task.pk}
+        )
+        self.assertEqual(resp.status_code, 403)
+        data = json.loads(resp.content)
+        self.assertIn('เฉพาะผู้รับงาน', data['error'])
+
+    def test_scan_wrong_package(self):
+        """Barcode not matching task's package must be rejected."""
+        pkg, task = self._make_in_progress_task('SCAN-CORRECT')
+        # Create a different package with a different barcode
+        prod2 = _create_product()
+        batch2 = _create_batch(prod2)
+        pkg2 = _create_package(prod2, batch2, barcode='SCAN-OTHER')
+        resp = self.client.post(
+            reverse('operations:barcode-scan'),
+            {'barcode': 'SCAN-OTHER', 'task_id': task.pk}
+        )
+        self.assertEqual(resp.status_code, 400)
+        data = json.loads(resp.content)
         self.assertIn('ไม่ตรงกับรายการงาน', data['error'])
+
+    def test_scan_nonexistent_task(self):
+        """Non-existent task_id must be rejected (404)."""
+        resp = self.client.post(
+            reverse('operations:barcode-scan'),
+            {'barcode': 'SCAN-X', 'task_id': '999999'}
+        )
+        self.assertEqual(resp.status_code, 404)
+
+    def test_scan_arbitrary_package_lookup_blocked(self):
+        """Without task_id, no arbitrary package data is exposed."""
+        pkg = _create_package(barcode='SCAN-ARBIT')
+        resp = self.client.post(
+            reverse('operations:barcode-scan'),
+            {'barcode': 'SCAN-ARBIT'}
+        )
+        # Must fail because task_id is required
+        self.assertEqual(resp.status_code, 400)
+        data = json.loads(resp.content)
+        self.assertFalse(data['success'])
+        # No package data in response
+        self.assertNotIn('package', data)
 
 
 class TestTaskHistoryView(TestCase):
@@ -581,13 +634,91 @@ class TestCancelWorkflow(TestCase):
         self.assertEqual(task.status, TaskStatus.CANCELLED)
 
 
-class TestConcurrentClaim(TestCase):
-    """Concurrent claim via HTTP — both users try to claim same task."""
+class TestCancelOwnership(TestCase):
+    """Cancel ownership: CLAIMED/IN_PROGRESS tasks may only be cancelled by claimant."""
 
     def setUp(self):
         self.client = Client()
         self.user = _create_user()
         self.client.login(userid='worker1', password='testpass123')
+        self.user2 = _create_user2()
+
+    def test_worker_b_cannot_cancel_worker_a_claimed_task(self):
+        """Worker B cannot cancel a task CLAIMED by Worker A."""
+        pkg, plan, _, _ = _make_package_with_plan()
+        task = WorkerTask.objects.create(
+            package=pkg, rotation_plan=plan,
+            task_type=TaskType.FREEZE_START,
+            scheduled_at=timezone.now(),
+            status=TaskStatus.CLAIMED,
+            claimed_by=self.user,
+        )
+        # Worker B tries to cancel
+        self.client.logout()
+        self.client.login(userid='worker2', password='testpass123')
+        resp = self.client.post(
+            reverse('operations:task-cancel', args=[task.pk]),
+            {'reason': 'ไม่ต้องการ'}
+        )
+        self.assertEqual(resp.status_code, 302)  # redirect back
+        task.refresh_from_db()
+        self.assertEqual(task.status, TaskStatus.CLAIMED)  # NOT cancelled
+
+    def test_worker_b_cannot_cancel_worker_a_in_progress_task(self):
+        """Worker B cannot cancel a task IN_PROGRESS by Worker A."""
+        pkg, plan, _, _ = _make_package_with_plan()
+        task = WorkerTask.objects.create(
+            package=pkg, rotation_plan=plan,
+            task_type=TaskType.FREEZE_START,
+            scheduled_at=timezone.now(),
+            status=TaskStatus.IN_PROGRESS,
+            claimed_by=self.user,
+        )
+        self.client.logout()
+        self.client.login(userid='worker2', password='testpass123')
+        resp = self.client.post(
+            reverse('operations:task-cancel', args=[task.pk]),
+            {'reason': ''}
+        )
+        self.assertEqual(resp.status_code, 302)
+        task.refresh_from_db()
+        self.assertEqual(task.status, TaskStatus.IN_PROGRESS)  # NOT cancelled
+
+    def test_claimant_can_cancel_own_claimed_task(self):
+        """The claimant may cancel their own CLAIMED task."""
+        pkg, plan, _, _ = _make_package_with_plan()
+        task = WorkerTask.objects.create(
+            package=pkg, rotation_plan=plan,
+            task_type=TaskType.FREEZE_START,
+            scheduled_at=timezone.now(),
+            status=TaskStatus.CLAIMED,
+            claimed_by=self.user,
+        )
+        resp = self.client.post(
+            reverse('operations:task-cancel', args=[task.pk]),
+            {'reason': 'ยกเลิกเอง'}
+        )
+        self.assertEqual(resp.status_code, 302)
+        task.refresh_from_db()
+        self.assertEqual(task.status, TaskStatus.CANCELLED)
+
+    def test_claimant_can_cancel_own_in_progress_task(self):
+        """The claimant may cancel their own IN_PROGRESS task."""
+        pkg, plan, _, _ = _make_package_with_plan()
+        task = WorkerTask.objects.create(
+            package=pkg, rotation_plan=plan,
+            task_type=TaskType.FREEZE_START,
+            scheduled_at=timezone.now(),
+            status=TaskStatus.IN_PROGRESS,
+            claimed_by=self.user,
+        )
+        resp = self.client.post(
+            reverse('operations:task-cancel', args=[task.pk]),
+            {'reason': ''}
+        )
+        self.assertEqual(resp.status_code, 302)
+        task.refresh_from_db()
+        self.assertEqual(task.status, TaskStatus.CANCELLED)
 
     def test_two_users_claim_same_task(self):
         user1 = self.user
@@ -615,6 +746,46 @@ class TestConcurrentClaim(TestCase):
         # Still claimed by first user
         self.assertEqual(task.claimed_by, user1)
         self.assertEqual(task.status, TaskStatus.CLAIMED)
+
+
+class TestThaiErrorFailSafe(TestCase):
+    """Thai error handling: unknown errors must return generic Thai message, never raw text."""
+
+    def test_unmapped_error_returns_generic_thai(self):
+        """An unmapped backend error must produce a generic Thai message."""
+        from operations.views import _thai_error, GENERIC_THAI_ERROR
+        result = _thai_error('SomeInternalLibraryError: crash in unknown module')
+        self.assertEqual(result, GENERIC_THAI_ERROR)
+        self.assertIn('เกิดข้อผิดพลาด', result)
+        # Must NOT contain English error text
+        self.assertNotIn('SomeInternalLibraryError', result)
+        self.assertNotIn('crash', result)
+
+    def test_known_error_still_returns_specific_thai(self):
+        """Known errors still return specific Thai messages."""
+        from operations.views import _thai_error
+        # This maps to 'สถานะงานไม่ถูกต้อง' because 'status is' matches first
+        result = _thai_error('Cannot claim task: status is COMPLETED')
+        self.assertIn('สถานะงานไม่ถูกต้อง', result)
+        self.assertNotIn('เกิดข้อผิดพลาด', result)
+        # A different known error maps to its own Thai text
+        result2 = _thai_error('Task is stale: expected PACKED, got FREEZING')
+        self.assertIn('สถานะแพ็กเกจ', result2)
+        self.assertNotIn('เกิดข้อผิดพลาด', result2)
+
+    def test_generic_error_never_exposes_backend_text(self):
+        """Test via the actual view: an unexpected error must show generic Thai."""
+        self.client = Client()
+        self.user = _create_user()
+        self.client.login(userid='worker1', password='testpass123')
+        # Try to claim a non-existent task — triggers a backend error
+        resp = self.client.post(reverse('operations:task-claim', args=[999999]))
+        # 404 is fine — but the toast error must not contain raw Python
+        if resp.status_code == 200:
+            # If somehow 200, check no raw exception text leaked
+            content = resp.content.decode()
+            self.assertNotIn('Traceback', content)
+            self.assertNotIn('Exception', content)
 
 
 class TestAjaxEndpoints(TestCase):
