@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% block title %}ประวัติงาน - CL.MEAT{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex items-center justify-between flex-wrap gap-4">
+        <div>
+            <h1 class="text-3xl font-bold text-dark-text">📜 ประวัติงาน</h1>
+            <p class="text-dark-muted mt-1">
+                ประวัติการทำงานของ {{ user.display_name }}
+            </p>
+        </div>
+        <a href="{% url 'operations:task-list' %}" class="btn btn-ghost btn-sm">← กลับไปรายการงาน</a>
+    </div>
+
+    <!-- Task History List -->
+    <div class="space-y-3">
+        {% for task in tasks %}
+        <a href="{% url 'operations:task-detail' task.pk %}"
+           class="card block hover-glow cursor-pointer border-l-4
+                  {% if task.status == 'COMPLETED' %}border-emerald-500
+                  {% elif task.status == 'CANCELLED' %}border-gray-500
+                  {% elif task.status == 'SKIPPED' %}border-amber-500
+                  {% elif task.status == 'OVERDUE' %}border-red-500
+                  {% else %}border-dark-border{% endif %}">
+            <div class="flex items-center justify-between gap-4">
+                <div class="flex items-center gap-3 min-w-0">
+                    <span class="text-lg flex-shrink-0">
+                        {{ task.package.product.category.emoji|default:'📦' }}
+                    </span>
+                    <div class="min-w-0">
+                        <div class="flex items-center gap-2">
+                            <h3 class="font-semibold text-dark-text truncate">
+                                {{ task.package.product.display_name }}
+                            </h3>
+                            <span class="badge
+                                {% if task.status == 'COMPLETED' %}bg-emerald-600
+                                {% elif task.status == 'CANCELLED' %}bg-gray-600
+                                {% elif task.status == 'SKIPPED' %}bg-amber-600
+                                {% elif task.status == 'OVERDUE' %}bg-red-600
+                                {% else %}bg-dark-muted{% endif %} text-xs">
+                                {{ task.get_status_display }}
+                            </span>
+                        </div>
+                        <div class="flex items-center gap-3 mt-1 text-xs text-dark-muted">
+                            <span>🔄 {{ task.get_task_type_display }}</span>
+                            <span>📦 {{ task.package.barcode }}</span>
+                            {% if task.completed_at %}
+                            <span>🕐 {{ task.completed_at|date:"d M Y H:i" }}</span>
+                            {% elif task.cancelled_at %}
+                            <span>🕐 {{ task.cancelled_at|date:"d M Y H:i" }}</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                <div class="flex-shrink-0 text-dark-muted">
+                    →
+                </div>
+            </div>
+        </a>
+        {% empty %}
+        <div class="card text-center py-12 text-dark-muted">
+            <p class="text-4xl mb-2">📭</p>
+            <p>ยังไม่มีประวัติงาน</p>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Pagination -->
+    {% if page_obj.has_other_pages %}
+    <div class="flex items-center justify-center gap-2">
+        {% if page_obj.has_previous %}
+        <a href="?page={{ page_obj.previous_page_number }}" class="btn btn-ghost btn-sm">← ก่อนหน้า</a>
+        {% endif %}
+        <span class="text-sm text-dark-muted">
+            หน้า {{ page_obj.number }} จาก {{ page_obj.paginator.num_pages }}
+        </span>
+        {% if page_obj.has_next %}
+        <a href="?page={{ page_obj.next_page_number }}" class="btn btn-ghost btn-sm">ถัดไป →</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

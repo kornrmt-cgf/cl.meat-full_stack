@@ -15,6 +15,7 @@ urlpatterns = [
     path("schedule/", include("scheduling.urls")),
     path("reports/", include("reports.urls")),
     path("notifications/", include("notifications.urls")),
+    path("worker/", include("operations.urls")),
 ]
 
 # Serve media files ใน development

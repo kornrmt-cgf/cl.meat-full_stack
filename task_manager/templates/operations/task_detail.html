@@ -1,0 +1,441 @@
+{% extends "base.html" %}
+
+{% block title %}งาน: {{ type_label }} - CL.MEAT{% endblock %}
+
+{% block content %}
+<div class="space-y-6"
+     x-data="taskDetail()"
+     x-init="init()">
+
+    <!-- Back button -->
+    <div>
+        <a href="{% url 'operations:task-list' %}"
+           class="btn btn-ghost btn-sm">← กลับไปรายการงาน</a>
+    </div>
+
+    <!-- Task Header -->
+    <div class="card border-l-4
+        {% if task.status == 'PENDING' %}border-blue-500
+        {% elif task.status == 'CLAIMED' %}border-purple-500
+        {% elif task.status == 'IN_PROGRESS' %}border-amber-500 border-2 border-amber-500/30 animate-glow
+        {% elif task.status == 'COMPLETED' %}border-emerald-500
+        {% elif task.status == 'CANCELLED' %}border-gray-500
+        {% elif task.status == 'SKIPPED' %}border-gray-500
+        {% else %}border-dark-border{% endif %}">
+
+        <div class="flex items-start justify-between gap-4 flex-wrap">
+            <div class="flex-1 min-w-0">
+                <!-- Task Type -->
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="text-2xl">{{ package.product.category.emoji|default:'📦' }}</span>
+                    <div>
+                        <h1 class="text-xl font-bold text-dark-text">{{ type_label }}</h1>
+                        <p class="text-sm text-dark-muted">งาน #{{ task.pk }} · {{ task.get_task_type_display }}</p>
+                    </div>
+                </div>
+
+                <!-- Status Badge -->
+                <div class="flex items-center gap-2 mt-2">
+                    <span class="badge
+                        {% if task.status == 'PENDING' %}bg-blue-600
+                        {% elif task.status == 'CLAIMED' %}bg-purple-600
+                        {% elif task.status == 'IN_PROGRESS' %}bg-amber-600
+                        {% elif task.status == 'COMPLETED' %}bg-emerald-600
+                        {% elif task.status == 'CANCELLED' %}bg-gray-600
+                        {% elif task.status == 'SKIPPED' %}bg-gray-600
+                        {% else %}bg-dark-muted{% endif %}">
+                        {{ status_label }}
+                    </span>
+                    {% if is_claimed_by_another %}
+                    <span class="text-sm text-red-400">🔒 งานนี้ถูกพนักงานคนอื่นรับไปแล้ว</span>
+                    {% endif %}
+                    {% if not is_supported %}
+                    <span class="text-sm text-amber-400">⚠️ งานนี้ยังไม่พร้อมใช้งาน</span>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="flex items-center gap-2 flex-shrink-0">
+                {% if task.status == 'PENDING' %}
+                <form method="post" action="{% url 'operations:task-claim' task.pk %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-primary">
+                        🤝 รับงาน
+                    </button>
+                </form>
+
+                {% elif task.status == 'CLAIMED' and is_mine %}
+                <form method="post" action="{% url 'operations:task-start' task.pk %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-warning">
+                        ▶️ เริ่มงาน
+                    </button>
+                </form>
+
+                {% elif task.status == 'IN_PROGRESS' and is_mine %}
+                <button @click="showCompleteDialog = true"
+                        class="btn btn-success">
+                    ✅ เสร็จงาน
+                </button>
+
+                {% elif task.status == 'COMPLETED' %}
+                <span class="text-emerald-400 font-medium">✅ งานเสร็จสิ้น</span>
+
+                {% elif task.status == 'CANCELLED' %}
+                <span class="text-dark-muted font-medium">ℹ️ งานถูกยกเลิก</span>
+
+                {% elif task.status == 'SKIPPED' %}
+                <span class="text-dark-muted font-medium">ℹ️ ไม่สามารถดำเนินการได้</span>
+                {% endif %}
+
+                {% if task.status != 'COMPLETED' and task.status != 'CANCELLED' and task.status != 'SKIPPED' %}
+                <!-- Cancel button -->
+                <button @click="showCancelDialog = true"
+                        class="btn btn-ghost text-sm">
+                    ❌ ยกเลิก
+                </button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Package Info -->
+    <div class="card">
+        <h2 class="text-lg font-bold text-dark-text mb-4">📦 ข้อมูลแพ็กเกจ</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div>
+                <p class="text-xs text-dark-muted">บาร์โค้ด</p>
+                <p class="font-mono text-dark-text font-bold">{{ package.barcode }}</p>
+            </div>
+            <div>
+                <p class="text-xs text-dark-muted">สินค้า</p>
+                <p class="font-medium text-dark-text">{{ product.display_name }}</p>
+                <p class="text-xs text-dark-muted">{{ product.sku }}</p>
+            </div>
+            <div>
+                <p class="text-xs text-dark-muted">น้ำหนัก</p>
+                <p class="font-medium text-dark-text">{{ package.weight }} kg</p>
+            </div>
+            <div>
+                <p class="text-xs text-dark-muted">ราคาขาย</p>
+                <p class="font-medium text-dark-text">฿{{ package.selling_price|floatformat:2 }}</p>
+            </div>
+            <div>
+                <p class="text-xs text-dark-muted">สถานะปัจจุบัน</p>
+                <p class="font-medium text-dark-text">{{ package_state_display }}</p>
+            </div>
+            <div>
+                <p class="text-xs text-dark-muted">ตำแหน่งเก็บ</p>
+                <p class="font-medium text-dark-text">{{ package.storage_location|default:"ไม่ระบุ" }}</p>
+            </div>
+            {% if package.batch %}
+            <div>
+                <p class="text-xs text-dark-muted">Batch</p>
+                <p class="font-medium text-dark-text">{{ package.batch.batch_number }}</p>
+            </div>
+            {% endif %}
+            {% if package.batch.supplier %}
+            <div>
+                <p class="text-xs text-dark-muted">ซัพพลายเออร์</p>
+                <p class="font-medium text-dark-text">{{ package.batch.supplier.name }}</p>
+            </div>
+            {% endif %}
+            <div>
+                <p class="text-xs text-dark-muted">วันที่บรรจุ</p>
+                <p class="font-medium text-dark-text">{{ package.packed_at|date:"d M Y H:i" }}</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Task Info -->
+    <div class="card">
+        <h2 class="text-lg font-bold text-dark-text mb-4">📋 ข้อมูลงาน</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div>
+                <p class="text-xs text-dark-muted">กำหนดเวลา</p>
+                <p class="font-medium text-dark-text">{{ task.scheduled_at|date:"d M Y H:i" }}</p>
+            </div>
+            {% if task.claimed_by %}
+            <div>
+                <p class="text-xs text-dark-muted">ผู้รับงาน</p>
+                <p class="font-medium text-dark-text">{{ task.claimed_by.display_name }}</p>
+            </div>
+            {% endif %}
+            {% if task.claimed_at %}
+            <div>
+                <p class="text-xs text-dark-muted">เวลาเริ่มรับ</p>
+                <p class="font-medium text-dark-text">{{ task.claimed_at|date:"H:i:s" }}</p>
+            </div>
+            {% endif %}
+            {% if task.started_at %}
+            <div>
+                <p class="text-xs text-dark-muted">เวลาเริ่มทำงาน</p>
+                <p class="font-medium text-dark-text">{{ task.started_at|date:"H:i:s" }}</p>
+            </div>
+            {% endif %}
+            {% if task.completed_at %}
+            <div>
+                <p class="text-xs text-dark-muted">เวลาเสร็จสิ้น</p>
+                <p class="font-medium text-dark-text">{{ task.completed_at|date:"H:i:s" }}</p>
+            </div>
+            {% endif %}
+            {% if task.completed_by %}
+            <div>
+                <p class="text-xs text-dark-muted">ผู้เสร็จงาน</p>
+                <p class="font-medium text-dark-text">{{ task.completed_by.display_name }}</p>
+            </div>
+            {% endif %}
+            {% if task.notes %}
+            <div class="sm:col-span-2">
+                <p class="text-xs text-dark-muted">หมายเหตุ</p>
+                <p class="font-medium text-dark-text">{{ task.notes }}</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Barcode Scan (for IN_PROGRESS tasks) -->
+    {% if task.status == 'IN_PROGRESS' and is_mine and is_supported %}
+    <div class="card border-primary-500/30 bg-primary-600/5">
+        <h2 class="text-lg font-bold text-dark-text mb-3">🔍 สแกนบาร์โค้ด</h2>
+        <p class="text-sm text-dark-muted mb-3">สแกนบาร์โค้ดบนแพ็กเกจเพื่อยืนยันว่าถูกต้อง</p>
+
+        <div class="flex gap-2">
+            <input type="text"
+                   id="barcode-input"
+                   x-ref="barcodeInput"
+                   x-model="barcode"
+                   @keydown.enter.prevent="scanBarcode()"
+                   placeholder="พิมพ์หรือสแกนบาร์โค้ด..."
+                   class="form-input flex-1"
+                   autofocus>
+            <button @click="scanBarcode()"
+                    class="btn btn-primary"
+                    :disabled="scanning">
+                <span x-show="!scanning">🔍 ค้นหา</span>
+                <span x-show="scanning">⏳ กำลังค้นหา...</span>
+            </button>
+        </div>
+
+        <!-- Scan Result -->
+        <div x-show="scanResult" x-transition
+             class="mt-3 p-4 rounded-lg"
+             :class="scanResult?.success ? 'bg-emerald-600/10 border border-emerald-500/30' : 'bg-red-600/10 border border-red-500/30'">
+            <template x-if="scanResult?.success">
+                <div>
+                    <p class="text-emerald-400 font-medium">✅ พบแพ็กเกจ</p>
+                    <div class="grid grid-cols-2 gap-2 mt-2 text-sm">
+                        <div>
+                            <span class="text-dark-muted">สินค้า: </span>
+                            <span class="text-dark-text" x-text="scanResult.package.product_name"></span>
+                        </div>
+                        <div>
+                            <span class="text-dark-muted">น้ำหนัก: </span>
+                            <span class="text-dark-text" x-text="scanResult.package.weight + ' kg'"></span>
+                        </div>
+                        <div>
+                            <span class="text-dark-muted">สถานะ: </span>
+                            <span class="text-dark-text" x-text="scanResult.package.state"></span>
+                        </div>
+                        <div>
+                            <span class="text-dark-muted">ตำแหน่ง: </span>
+                            <span class="text-dark-text" x-text="scanResult.package.storage_location || 'ไม่ระบุ'"></span>
+                        </div>
+                    </div>
+                    <template x-if="scanResult.task_match">
+                        <p class="text-emerald-400 text-sm mt-2 font-medium">✓ ตรงกับงานนี้</p>
+                    </template>
+                    <template x-if="scanResult.task_match === false">
+                        <p class="text-red-400 text-sm mt-2 font-medium">✗ ไม่ตรงกับงานนี้</p>
+                    </template>
+                </div>
+            </template>
+            <template x-if="scanResult && !scanResult.success">
+                <p class="text-red-400 font-medium" x-text="'❌ ' + scanResult.error"></p>
+            </template>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Audit Trail -->
+    {% if events %}
+    <div class="card">
+        <h2 class="text-lg font-bold text-dark-text mb-4">📜 ประวัติ</h2>
+        <div class="space-y-2">
+            {% for event in events %}
+            <div class="flex items-start gap-3 text-sm">
+                <span class="text-dark-muted whitespace-nowrap">{{ event.timestamp|date:"H:i:s" }}</span>
+                <span class="font-medium text-dark-text">{{ event.event_type }}</span>
+                {% if event.actor %}
+                <span class="text-dark-muted">— {{ event.actor }}</span>
+                {% endif %}
+                {% if event.notes %}
+                <span class="text-dark-muted text-xs italic">({{ event.notes }})</span>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Complete Dialog -->
+    <div x-show="showCompleteDialog" x-transition
+         class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+        <div class="card w-full max-w-md" @click.away="showCompleteDialog = false">
+            <h3 class="text-lg font-bold text-dark-text mb-2">✅ ยืนยันการเสร็จงาน</h3>
+            <p class="text-sm text-dark-muted mb-4">
+                ยืนยันว่า <strong>{{ type_label }}</strong> สำหรับแพ็กเกจ
+                <strong>{{ package.barcode }}</strong> เสร็จเรียบร้อยแล้ว
+            </p>
+
+            <form method="post" action="{% url 'operations:task-complete' task.pk %}">
+                {% csrf_token %}
+                <div class="space-y-3">
+                    <!-- Barcode confirmation -->
+                    <div>
+                        <label class="text-sm text-dark-muted block mb-1">บาร์โค้ด (ยืนยัน)</label>
+                        <input type="text" name="barcode" placeholder="พิมพ์หรือสแกนบาร์โค้ด..."
+                               class="form-input"
+                               x-ref="confirmBarcodeInput">
+                    </div>
+                    <!-- Notes -->
+                    <div>
+                        <label class="text-sm text-dark-muted block mb-1">หมายเหตุ (ถ้ามี)</label>
+                        <textarea name="notes" placeholder="รายละเอียดเพิ่มเติม..."
+                                  class="form-input" rows="2"></textarea>
+                    </div>
+                </div>
+                <div class="flex gap-2 mt-4">
+                    <button type="submit" class="btn btn-success flex-1">
+                        ✅ ยืนยันเสร็จงาน
+                    </button>
+                    <button type="button" @click="showCompleteDialog = false"
+                            class="btn btn-ghost flex-1">
+                        ยกเลิก
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Cancel Dialog -->
+    <div x-show="showCancelDialog" x-transition
+         class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+        <div class="card w-full max-w-md" @click.away="showCancelDialog = false">
+            <h3 class="text-lg font-bold text-dark-text mb-2">❌ ยืนยันการยกเลิกงาน</h3>
+            <p class="text-sm text-dark-muted mb-4">
+                ยกเลิกงาน <strong>{{ type_label }}</strong> สำหรับแพ็กเกจ
+                <strong>{{ package.barcode }}</strong>?
+            </p>
+            <form method="post" action="{% url 'operations:task-cancel' task.pk %}">
+                {% csrf_token %}
+                <div class="space-y-3">
+                    <div>
+                        <label class="text-sm text-dark-muted block mb-1">เหตุผล (ถ้ามี)</label>
+                        <textarea name="reason" placeholder="เหตุผลที่ยกเลิก..."
+                                  class="form-input" rows="2"></textarea>
+                    </div>
+                </div>
+                <div class="flex gap-2 mt-4">
+                    <button type="submit" class="btn btn-danger flex-1">
+                        ❌ ยืนยันยกเลิก
+                    </button>
+                    <button type="button" @click="showCancelDialog = false"
+                            class="btn btn-ghost flex-1">
+                        กลับ
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function taskDetail() {
+    return {
+        showCompleteDialog: false,
+        showCancelDialog: false,
+        barcode: '',
+        scanResult: null,
+        scanning: false,
+        statusInterval: null,
+
+        init() {
+            // Auto-focus barcode input if IN_PROGRESS
+            this.$nextTick(() => {
+                if (this.$refs.barcodeInput) {
+                    this.$refs.barcodeInput.focus();
+                }
+            });
+
+            // Poll for status changes every 10 seconds
+            this.statusInterval = setInterval(() => this.checkStatus(), 10000);
+
+            // Focus confirm barcode when dialog opens
+            this.$watch('showCompleteDialog', (val) => {
+                if (val) {
+                    this.$nextTick(() => {
+                        if (this.$refs.confirmBarcodeInput) {
+                            this.$refs.confirmBarcodeInput.focus();
+                        }
+                    });
+                }
+            });
+        },
+
+        destroy() {
+            if (this.statusInterval) clearInterval(this.statusInterval);
+        },
+
+        async checkStatus() {
+            try {
+                const resp = await fetch(
+                    "{% url 'operations:task-status-ajax' task.pk %}"
+                );
+                if (resp.ok) {
+                    const data = await resp.json();
+                    if (data.status !== '{{ task.status }}') {
+                        window.location.reload();
+                    }
+                }
+            } catch(e) { /* ignore */ }
+        },
+
+        async scanBarcode() {
+            if (!this.barcode.trim()) return;
+            this.scanning = true;
+            this.scanResult = null;
+
+            try {
+                const formData = new FormData();
+                formData.append('barcode', this.barcode.trim());
+                formData.append('task_id', '{{ task.pk }}');
+
+                const resp = await fetch("{% url 'operations:barcode-scan' %}", {
+                    method: 'POST',
+                    headers: { 'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content },
+                    body: formData,
+                });
+
+                this.scanResult = await resp.json();
+
+                if (this.scanResult.success) {
+                    this.barcode = '';
+                    // Auto-focus back to input for next scan
+                    this.$nextTick(() => {
+                        if (this.$refs.barcodeInput) this.$refs.barcodeInput.focus();
+                    });
+                }
+            } catch(e) {
+                this.scanResult = { success: false, error: 'เกิดข้อผิดพลาดในการเชื่อมต่อ' };
+            }
+
+            this.scanning = false;
+        }
+    };
+}
+</script>
+{% endblock %}

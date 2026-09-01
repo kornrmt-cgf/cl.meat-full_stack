@@ -1,0 +1,307 @@
+{% extends "base.html" %}
+
+{% block title %}งานของฉัน - CL.MEAT{% endblock %}
+
+{% block content %}
+<div class="space-y-6"
+     x-data="taskBoard()" x-init="startPolling()">
+
+    <!-- Header -->
+    <div class="flex items-center justify-between flex-wrap gap-4">
+        <div>
+            <h1 class="text-3xl font-bold text-dark-text">📋 งานของฉัน</h1>
+            <p class="text-dark-muted mt-1">
+                {{ today|date:"l d F Y" }} | มีงาน {{ total }} รายการ
+            </p>
+        </div>
+        <div class="flex items-center gap-3">
+            <a href="{% url 'operations:task-history' %}"
+               class="btn btn-ghost btn-sm">📜 ประวัติงาน</a>
+            <button @click="refreshTasks()"
+                    class="btn btn-ghost btn-sm"
+                    :class="{'opacity-50': refreshing}"
+                    :disabled="refreshing">
+                🔄 รีเฟรช
+            </button>
+        </div>
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        <div class="stat-card">
+            <div class="stat-number text-blue-400" x-text="counts.pending">{{ pending.count }}</div>
+            <div class="stat-label">⏳ รอดำเนินการ</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number text-purple-400" x-text="counts.claimed">{{ claimed.count }}</div>
+            <div class="stat-label">🤝 รับแล้ว</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number text-amber-400" x-text="counts.in_progress">{{ in_progress.count }}</div>
+            <div class="stat-label">⚡ กำลังทำ</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number text-emerald-400" x-text="counts.completed">{{ completed.count }}</div>
+            <div class="stat-label">✅ เสร็จแล้ว</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number text-dark-muted" x-text="counts.total">{{ total }}</div>
+            <div class="stat-label">📊 ทั้งหมด</div>
+        </div>
+    </div>
+
+    <!-- Pending Tasks — งานที่รอดำเนินการ -->
+    <div class="space-y-4">
+        <div class="flex items-center gap-2">
+            <div class="w-3 h-3 rounded-full bg-blue-500"></div>
+            <h2 class="text-lg font-semibold text-dark-text">⏳ งานที่รอดำเนินการ</h2>
+            <span class="badge bg-blue-600">{{ pending.count }}</span>
+        </div>
+
+        {% for task in pending %}
+        <div class="card hover-glow cursor-pointer border-l-4 border-blue-500"
+             @click="window.location='{% url 'operations:task-detail' task.pk %}'">
+            <div class="flex items-start justify-between gap-3">
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2 mb-1">
+                        <span class="text-lg">{{ task.package.product.category.emoji|default:'📦' }}</span>
+                        <h3 class="font-bold text-dark-text truncate">
+                            {{ task.package.product.display_name }}
+                        </h3>
+                        <span class="text-xs px-2 py-0.5 rounded bg-dark-surface text-dark-muted">
+                            {{ task.package.weight }}kg
+                        </span>
+                    </div>
+                    <div class="flex items-center gap-2 mt-1">
+                        <span class="badge bg-blue-600 text-xs">⏳ รอดำเนินการ</span>
+                        <span class="text-xs text-dark-muted">
+                            📦 {{ task.package.barcode }}
+                        </span>
+                    </div>
+                    <div class="flex items-center gap-3 mt-2 text-xs text-dark-muted">
+                        <span>📅 {{ task.scheduled_at|date:"H:i" }}</span>
+                        <span>🔄 {{ task.get_task_type_display }}</span>
+                    </div>
+                </div>
+                <form method="post"
+                      action="{% url 'operations:task-claim' task.pk %}"
+                      @click.stop
+                      class="flex-shrink-0">
+                    {% csrf_token %}
+                    <button type="submit"
+                            class="btn btn-primary btn-sm"
+                            @click.stop>
+                        🤝 รับงาน
+                    </button>
+                </form>
+            </div>
+        </div>
+        {% empty %}
+        <div class="card text-center py-8 text-dark-muted">
+            <p class="text-4xl mb-2">📭</p>
+            <p>ไม่มีงานที่รอดำเนินการ</p>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Claimed Tasks — งานที่รับแล้ว -->
+    {% if claimed %}
+    <div class="space-y-4">
+        <div class="flex items-center gap-2">
+            <div class="w-3 h-3 rounded-full bg-purple-500"></div>
+            <h2 class="text-lg font-semibold text-dark-text">🤝 งานที่รับแล้ว</h2>
+            <span class="badge bg-purple-600">{{ claimed.count }}</span>
+        </div>
+
+        {% for task in claimed %}
+        <div class="card hover-glow cursor-pointer border-l-4 border-purple-500"
+             @click="window.location='{% url 'operations:task-detail' task.pk %}'">
+            <div class="flex items-start justify-between gap-3">
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2 mb-1">
+                        <span class="text-lg">{{ task.package.product.category.emoji|default:'📦' }}</span>
+                        <h3 class="font-bold text-dark-text truncate">
+                            {{ task.package.product.display_name }}
+                        </h3>
+                        <span class="text-xs px-2 py-0.5 rounded bg-dark-surface text-dark-muted">
+                            {{ task.package.weight }}kg
+                        </span>
+                    </div>
+                    <div class="flex items-center gap-2 mt-1">
+                        <span class="badge bg-purple-600 text-xs">🤝 รับแล้ว</span>
+                        <span class="text-xs text-dark-muted">🔄 {{ task.get_task_type_display }}</span>
+                    </div>
+                    <div class="flex items-center gap-3 mt-2 text-xs text-dark-muted">
+                        <span>📅 {{ task.scheduled_at|date:"H:i" }}</span>
+                        {% if task.claimed_by %}
+                        <span>👤 {{ task.claimed_by.display_name }}</span>
+                        {% endif %}
+                        {% if task.claimed_at %}
+                        <span>🕐 {{ task.claimed_at|date:"H:i" }}</span>
+                        {% endif %}
+                    </div>
+                </div>
+                <form method="post"
+                      action="{% url 'operations:task-start' task.pk %}"
+                      @click.stop
+                      class="flex-shrink-0">
+                    {% csrf_token %}
+                    <button type="submit"
+                            class="btn btn-warning btn-sm">
+                        ▶️ เริ่มงาน
+                    </button>
+                </form>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- In Progress — กำลังทำ -->
+    {% if in_progress %}
+    <div class="space-y-4">
+        <div class="flex items-center gap-2">
+            <div class="w-3 h-3 rounded-full bg-amber-500 animate-pulse"></div>
+            <h2 class="text-lg font-semibold text-dark-text">⚡ กำลังทำ</h2>
+            <span class="badge bg-amber-600">{{ in_progress.count }}</span>
+        </div>
+
+        {% for task in in_progress %}
+        <div class="card hover-glow cursor-pointer border-l-4 border-amber-500 border-2 border-amber-500/30 animate-glow"
+             @click="window.location='{% url 'operations:task-detail' task.pk %}'">
+            <div class="flex items-start justify-between gap-3">
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2 mb-1">
+                        <div class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></div>
+                        <h3 class="font-bold text-dark-text truncate">
+                            {{ task.package.product.display_name }}
+                        </h3>
+                        <span class="text-xs px-2 py-0.5 rounded bg-dark-surface text-dark-muted">
+                            {{ task.package.weight }}kg
+                        </span>
+                    </div>
+                    <div class="flex items-center gap-2 mt-1">
+                        <span class="badge bg-amber-600 text-xs">⚡ กำลังทำ</span>
+                        <span class="text-xs text-dark-muted">🔄 {{ task.get_task_type_display }}</span>
+                    </div>
+                    <div class="flex items-center gap-3 mt-2 text-xs text-dark-muted">
+                        <span>📅 {{ task.scheduled_at|date:"H:i" }}</span>
+                        {% if task.claimed_by %}
+                        <span>👤 {{ task.claimed_by.display_name }}</span>
+                        {% endif %}
+                    </div>
+                </div>
+                <a href="{% url 'operations:task-detail' task.pk %}"
+                   class="btn btn-success btn-sm flex-shrink-0">
+                    ✅ เสร็จงาน
+                </a>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Completed — เสร็จแล้ววันนี้ -->
+    {% if completed %}
+    <div class="space-y-4">
+        <div class="flex items-center gap-2">
+            <div class="w-3 h-3 rounded-full bg-emerald-500"></div>
+            <h2 class="text-lg font-semibold text-dark-text">✅ เสร็จแล้ววันนี้</h2>
+            <span class="badge bg-emerald-600">{{ completed.count }}</span>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {% for task in completed %}
+            <div class="card opacity-75 border-l-4 border-emerald-500 cursor-pointer"
+                 @click="window.location='{% url 'operations:task-detail' task.pk %}'">
+                <div class="flex items-center gap-2">
+                    <span class="text-lg">{{ task.package.product.category.emoji|default:'📦' }}</span>
+                    <div class="min-w-0">
+                        <h3 class="text-sm font-medium text-dark-text truncate">
+                            {{ task.package.product.display_name }}
+                        </h3>
+                        <div class="flex items-center gap-2 mt-1">
+                            <span class="badge bg-emerald-600 text-xs">✅ เสร็จแล้ว</span>
+                            {% if task.completed_at %}
+                            <span class="text-xs text-dark-muted">🕐 {{ task.completed_at|date:"H:i" }}</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Cancelled / Skipped / Overdue -->
+    {% if cancelled %}
+    <div class="space-y-4">
+        <div class="flex items-center gap-2">
+            <div class="w-3 h-3 rounded-full bg-gray-500"></div>
+            <h2 class="text-lg font-semibold text-dark-muted">ℹ️ งานที่ยกเลิก/ข้าม</h2>
+            <span class="badge bg-gray-600">{{ cancelled.count }}</span>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {% for task in cancelled %}
+            <div class="card opacity-50 border-l-4 border-gray-500 cursor-pointer"
+                 @click="window.location='{% url 'operations:task-detail' task.pk %}'">
+                <div class="flex items-center gap-2">
+                    <div class="min-w-0">
+                        <h3 class="text-sm font-medium text-dark-muted truncate">
+                            {{ task.package.product.display_name }}
+                        </h3>
+                        <span class="text-xs text-dark-muted">
+                            {{ task.get_status_display }}
+                        </span>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function taskBoard() {
+    return {
+        counts: {
+            pending: {{ pending.count|default:0 }},
+            claimed: {{ claimed.count|default:0 }},
+            in_progress: {{ in_progress.count|default:0 }},
+            completed: {{ completed.count|default:0 }},
+            total: {{ total|default:0 }},
+        },
+        refreshing: false,
+        interval: null,
+
+        startPolling() {
+            this.interval = setInterval(() => this.refreshCounts(), 30000);
+        },
+
+        stopPolling() {
+            if (this.interval) clearInterval(this.interval);
+        },
+
+        async refreshCounts() {
+            try {
+                const resp = await fetch("{% url 'operations:task-list-ajax' %}", {
+                    headers: { 'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content }
+                });
+                if (resp.ok) {
+                    const data = await resp.json();
+                    this.counts = data;
+                }
+            } catch(e) { /* ignore */ }
+        },
+
+        async refreshTasks() {
+            this.refreshing = true;
+            window.location.reload();
+        }
+    };
+}
+</script>
+{% endblock %}
