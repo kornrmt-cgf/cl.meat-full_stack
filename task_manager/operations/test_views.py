@@ -307,33 +307,53 @@ class TestWorkerStartFlow(TestCase):
 
 
 class TestWorkerCompleteFlow(TestCase):
-    """Complete workflow via HTTP with barcode validation."""
+    """Complete workflow via HTTP — barcode is mandatory."""
 
     def setUp(self):
         self.client = Client()
         self.user = _create_user()
         self.client.login(userid='worker1', password='testpass123')
 
-    def test_complete_task_no_barcode(self):
+    def test_complete_task_no_barcode_rejected(self):
+        """Completion without barcode must be rejected by backend."""
         pkg, plan, _, _ = _make_package_with_plan()
         task = WorkerTask.objects.create(
             package=pkg, rotation_plan=plan,
             task_type=TaskType.FREEZE_START,
             scheduled_at=timezone.now(),
         )
-        # Claim + start
         self.client.post(reverse('operations:task-claim', args=[task.pk]))
         self.client.post(reverse('operations:task-start', args=[task.pk]))
-        # Complete
         resp = self.client.post(
             reverse('operations:task-complete', args=[task.pk]),
             {'notes': 'Test completion'}
         )
         self.assertEqual(resp.status_code, 302)
         task.refresh_from_db()
-        self.assertEqual(task.status, TaskStatus.COMPLETED)
+        # Must NOT be completed — barcode is mandatory
+        self.assertNotEqual(task.status, TaskStatus.COMPLETED)
+        self.assertEqual(task.status, TaskStatus.IN_PROGRESS)
+
+    def test_complete_task_empty_barcode_rejected(self):
+        """Completion with whitespace-only barcode must be rejected."""
+        pkg, plan, _, _ = _make_package_with_plan()
+        task = WorkerTask.objects.create(
+            package=pkg, rotation_plan=plan,
+            task_type=TaskType.FREEZE_START,
+            scheduled_at=timezone.now(),
+        )
+        self.client.post(reverse('operations:task-claim', args=[task.pk]))
+        self.client.post(reverse('operations:task-start', args=[task.pk]))
+        resp = self.client.post(
+            reverse('operations:task-complete', args=[task.pk]),
+            {'barcode': '   ', 'notes': ''}
+        )
+        self.assertEqual(resp.status_code, 302)
+        task.refresh_from_db()
+        self.assertNotEqual(task.status, TaskStatus.COMPLETED)
 
     def test_complete_task_with_correct_barcode(self):
+        """Completion with correct barcode succeeds."""
         pkg, plan, _, _ = _make_package_with_plan()
         task = WorkerTask.objects.create(
             package=pkg, rotation_plan=plan,
@@ -351,6 +371,7 @@ class TestWorkerCompleteFlow(TestCase):
         self.assertEqual(task.status, TaskStatus.COMPLETED)
 
     def test_complete_task_wrong_barcode_rejected(self):
+        """Completion with wrong barcode must be rejected."""
         pkg, plan, _, _ = _make_package_with_plan()
         task = WorkerTask.objects.create(
             package=pkg, rotation_plan=plan,
@@ -365,7 +386,29 @@ class TestWorkerCompleteFlow(TestCase):
         )
         self.assertEqual(resp.status_code, 302)
         task.refresh_from_db()
-        # Task should NOT be completed
+        self.assertNotEqual(task.status, TaskStatus.COMPLETED)
+        self.assertEqual(task.status, TaskStatus.IN_PROGRESS)
+
+    def test_complete_task_non_claimant_rejected(self):
+        """Worker B cannot complete a task claimed by Worker A."""
+        user2 = _create_user2()
+        pkg, plan, _, _ = _make_package_with_plan()
+        task = WorkerTask.objects.create(
+            package=pkg, rotation_plan=plan,
+            task_type=TaskType.FREEZE_START,
+            scheduled_at=timezone.now(),
+            status=TaskStatus.IN_PROGRESS,
+            claimed_by=self.user,
+        )
+        self.client.logout()
+        self.client.login(userid='worker2', password='testpass123')
+        resp = self.client.post(
+            reverse('operations:task-complete', args=[task.pk]),
+            {'barcode': pkg.barcode, 'notes': ''}
+        )
+        self.assertEqual(resp.status_code, 302)
+        task.refresh_from_db()
+        self.assertNotEqual(task.status, TaskStatus.COMPLETED)
         self.assertEqual(task.status, TaskStatus.IN_PROGRESS)
 
 
@@ -719,6 +762,79 @@ class TestCancelOwnership(TestCase):
         self.assertEqual(resp.status_code, 302)
         task.refresh_from_db()
         self.assertEqual(task.status, TaskStatus.CANCELLED)
+
+
+class TestServiceLayerCancel(TestCase):
+    """Service-layer cancel_task() claimant enforcement."""
+
+    def test_service_cancel_claimed_by_non_claimant_rejected(self):
+        """Service rejects cancel of CLAIMED task by non-claimant."""
+        user1 = _create_user('s1', 's1@test.com')
+        user2 = _create_user2('s2', 's2@test.com')
+        pkg, plan, _, _ = _make_package_with_plan()
+        task = WorkerTask.objects.create(
+            package=pkg, rotation_plan=plan,
+            task_type=TaskType.FREEZE_START,
+            scheduled_at=timezone.now(),
+            status=TaskStatus.CLAIMED,
+            claimed_by=user1,
+        )
+        with self.assertRaises(ValueError):
+            services.cancel_task(task, actor=user2)
+
+    def test_service_cancel_in_progress_by_non_claimant_rejected(self):
+        """Service rejects cancel of IN_PROGRESS task by non-claimant."""
+        user1 = _create_user('s3', 's3@test.com')
+        user2 = _create_user2('s4', 's4@test.com')
+        pkg, plan, _, _ = _make_package_with_plan()
+        task = WorkerTask.objects.create(
+            package=pkg, rotation_plan=plan,
+            task_type=TaskType.FREEZE_START,
+            scheduled_at=timezone.now(),
+            status=TaskStatus.IN_PROGRESS,
+            claimed_by=user1,
+        )
+        with self.assertRaises(ValueError):
+            services.cancel_task(task, actor=user2)
+
+    def test_service_cancel_claimed_by_claimant_succeeds(self):
+        """Service allows cancel of CLAIMED task by claimant."""
+        user1 = _create_user('s5', 's5@test.com')
+        pkg, plan, _, _ = _make_package_with_plan()
+        task = WorkerTask.objects.create(
+            package=pkg, rotation_plan=plan,
+            task_type=TaskType.FREEZE_START,
+            scheduled_at=timezone.now(),
+            status=TaskStatus.CLAIMED,
+            claimed_by=user1,
+        )
+        result = services.cancel_task(task, actor=user1)
+        result.refresh_from_db()
+        self.assertEqual(result.status, TaskStatus.CANCELLED)
+
+    def test_service_cancel_pending_by_anyone_succeeds(self):
+        """Service allows cancel of PENDING task by anyone."""
+        user1 = _create_user('s7', 's7@test.com')
+        user2 = _create_user2('s8', 's8@test.com')
+        pkg, plan, _, _ = _make_package_with_plan()
+        task = WorkerTask.objects.create(
+            package=pkg, rotation_plan=plan,
+            task_type=TaskType.FREEZE_START,
+            scheduled_at=timezone.now(),
+            status=TaskStatus.PENDING,
+        )
+        result = services.cancel_task(task, actor=user2)
+        result.refresh_from_db()
+        self.assertEqual(result.status, TaskStatus.CANCELLED)
+
+
+class TestConcurrentClaim(TestCase):
+    """Concurrent claim via HTTP."""
+
+    def setUp(self):
+        self.client = Client()
+        self.user = _create_user()
+        self.client.login(userid='worker1', password='testpass123')
 
     def test_two_users_claim_same_task(self):
         user1 = self.user

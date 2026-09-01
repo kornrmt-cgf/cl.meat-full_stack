@@ -292,11 +292,12 @@
             <form method="post" action="{% url 'operations:task-complete' task.pk %}">
                 {% csrf_token %}
                 <div class="space-y-3">
-                    <!-- Barcode confirmation -->
+                    <!-- Barcode confirmation (mandatory) -->
                     <div>
-                        <label class="text-sm text-dark-muted block mb-1">บาร์โค้ด (ยืนยัน)</label>
+                        <label class="text-sm text-dark-muted block mb-1">บาร์โค้ด (ยืนยัน) <span class="text-red-400">*</span></label>
                         <input type="text" name="barcode" placeholder="พิมพ์หรือสแกนบาร์โค้ด..."
                                class="form-input"
+                               required
                                x-ref="confirmBarcodeInput">
                     </div>
                     <!-- Notes -->

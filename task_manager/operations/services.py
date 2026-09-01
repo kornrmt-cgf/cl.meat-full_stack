@@ -295,16 +295,20 @@ def cancel_task(task, actor, reason=''):
 
     Cancelled tasks must never execute lifecycle mutations.
 
+    Ownership rules:
+        - PENDING tasks: anyone may cancel (no owner yet)
+        - CLAIMED / IN_PROGRESS tasks: only the claimant may cancel
+
     Args:
         task: WorkerTask instance
-        actor: who cancelled
+        actor: who cancelled (Django User or string for system)
         reason: why
 
     Returns:
         WorkerTask
 
     Raises:
-        ValueError: if task is already terminal
+        ValueError: if task is already terminal or non-claimant tries to cancel
     """
     task = WorkerTask.objects.select_for_update().get(pk=task.pk)
 
@@ -312,6 +316,15 @@ def cancel_task(task, actor, reason=''):
         raise ValueError(
             f"Cannot cancel task: status is {task.status}"
         )
+
+    # Claimant-only enforcement for CLAIMED / IN_PROGRESS
+    # System-level callers (actor without pk, e.g. 'system') bypass this check.
+    if task.status in [TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS]:
+        actor_pk = getattr(actor, 'pk', None)
+        if actor_pk is not None and task.claimed_by_id != actor_pk:
+            raise ValueError(
+                "Cannot cancel task: cancel only by claimant"
+            )
 
     task.status = TaskStatus.CANCELLED
     task.cancelled_at = timezone.now()

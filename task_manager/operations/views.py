@@ -94,6 +94,7 @@ def _thai_error(error_msg):
         'Cannot complete task': 'ไม่สามารถเสร็จงานนี้ได้',
         'Cannot cancel task': 'ไม่สามารถยกเลิกงานนี้ได้',
         'cancel only by claimant': 'เฉพาะผู้รับงานเท่านั้นที่สามารถยกเลิกงานนี้ได้',
+        'barcode required': 'กรุณากรอกบาร์โค้ดเพื่อยืนยันการเสร็จงาน',
         'String actor': 'ไม่สามารถใช้ข้อมูลนี้เป็นผู้รับงานได้',
         'must be a saved': 'ผู้รับงานต้องเป็นผู้ใช้ที่บันทึกไว้แล้ว',
         'must be a ': 'ผู้รับงานต้องเป็นผู้ใช้ที่ถูกต้อง',
@@ -240,24 +241,22 @@ class WorkerStartTaskView(LoginRequiredMixin, View):
 # ============================================================
 
 class WorkerCompleteTaskView(LoginRequiredMixin, View):
-    """เสร็จงาน — POST request with optional barcode + notes"""
+    """เสร็จงาน — POST request with mandatory barcode + notes"""
 
     def post(self, request, pk):
         task = get_object_or_404(WorkerTask, pk=pk)
         notes = request.POST.get('notes', '')
         barcode = request.POST.get('barcode', '').strip()
 
-        # Barcode validation: if provided, must match task's package
-        if barcode:
-            try:
-                scanned = Package.objects.get(barcode=barcode)
-            except Package.DoesNotExist:
-                messages.error(request, '❌ ไม่พบบาร์โค้ดนี้ในระบบ')
-                return redirect('operations:task-detail', pk=task.pk)
+        # Barcode is mandatory — backend is authoritative
+        if not barcode:
+            messages.error(request, '❌ กรุณากรอกบาร์โค้ดเพื่อยืนยันการเสร็จงาน')
+            return redirect('operations:task-detail', pk=task.pk)
 
-            if scanned.pk != task.package_id:
-                messages.error(request, '❌ บาร์โค้ดไม่ตรงกับรายการงาน')
-                return redirect('operations:task-detail', pk=task.pk)
+        # Barcode must match task's package
+        if task.package.barcode != barcode:
+            messages.error(request, '❌ บาร์โค้ดไม่ตรงกับรายการงาน')
+            return redirect('operations:task-detail', pk=task.pk)
 
         try:
             result = services.complete_task(

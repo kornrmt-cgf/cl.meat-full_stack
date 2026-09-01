@@ -222,7 +222,7 @@ class TestTaskStateTransitions(TransactionTestCase):
         task = _create_task(pkg, plan)
         claimed = claim_task(task, _get_or_create_worker('w1'))
 
-        cancelled = cancel_task(claimed, _get_or_create_worker('admin'))
+        cancelled = cancel_task(claimed, _get_or_create_worker('w1'))
         cancelled.refresh_from_db()
         self.assertEqual(cancelled.status, TaskStatus.CANCELLED)
 
@@ -366,7 +366,11 @@ class TestCancelVsClaim(TransactionTestCase):
             except Exception as e:
                 errors.append(('claim', str(e)))
 
+        worker = _get_or_create_worker('worker')
+
         def do_cancel():
+            # Cancel must use the same worker who might claim it
+            # (on PENDING tasks, anyone can cancel)
             try:
                 cancel_task(task, _get_or_create_worker('admin'))
                 results.append('cancel')
@@ -381,8 +385,9 @@ class TestCancelVsClaim(TransactionTestCase):
         t1.join(timeout=15)
         t2.join(timeout=15)
 
-        # Both may succeed: claim wins first, then cancel succeeds on CLAIMED
-        # Or cancel wins first, then claim fails on CANCELLED
+        # Cancel on PENDING succeeds regardless of who calls it.
+        # If cancel wins first, claim fails on CANCELLED.
+        # If claim wins first, cancel by admin fails on CLAIMED (claimant-only).
         self.assertTrue(len(results) >= 1,
             f'Expected at least 1 success, got {len(results)}: {errors}')
 
@@ -524,7 +529,7 @@ class TestTaskPackageConsistency(TransactionTestCase):
         events = TaskEvent.objects.filter(task=task)
         self.assertTrue(events.filter(event_type='TASK_STARTED').exists())
 
-        cancel_task(task, _get_or_create_worker('admin'), reason='test')
+        cancel_task(task, _get_or_create_worker('w1'), reason='test')
         events = TaskEvent.objects.filter(task=task)
         self.assertTrue(events.filter(event_type='TASK_CANCELLED').exists())
 
