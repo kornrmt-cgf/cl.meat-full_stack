@@ -90,6 +90,12 @@ coverage.xml
 *.7z
 *.pdf
 
+# === Confidential spreadsheets ===
+*.csv
+*.xlsx
+*.xls
+*.xlsm
+
 # === Logs ===
 logs/
 *.log

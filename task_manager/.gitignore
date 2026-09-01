@@ -54,3 +54,9 @@ coverage.xml
 # === Database dumps ===
 *.dump
 *.sql
+
+# === Confidential spreadsheets ===
+*.csv
+*.xlsx
+*.xls
+*.xlsm
