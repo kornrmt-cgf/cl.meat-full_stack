@@ -550,6 +550,86 @@ class TestThawCapacity(PlanningTestBase):
         overlaps = check_thaw_interval_overlap(self.thaw_profile, future_start, future_end)
         self.assertEqual(len(overlaps), 0)
 
+    def test_cross_profile_capacity_isolation(self):
+        """Profile A entries must NOT consume Profile B capacity."""
+        profile_b = ThawProfile.objects.create(
+            name='Profile B', default_duration=timedelta(hours=6),
+            minimum_duration=timedelta(hours=3),
+            buffer_duration=timedelta(hours=1), thaw_capacity=1,
+        )
+
+        # Create packages
+        pkg_a = self._create_package(state=PackageState.FROZEN, barcode='ISO-A1')
+        pkg_b = self._create_package(state=PackageState.FROZEN, barcode='ISO-B1')
+
+        # Create plans with explicit thaw profiles
+        target = timezone.now() + timedelta(days=3)
+        plan_a = create_rotation_plan(pkg_a, target, self.freeze_profile,
+                                      self.thaw_profile, actor='test')
+        plan_b = create_rotation_plan(pkg_b, target, self.freeze_profile,
+                                      profile_b, actor='test')
+
+        # Add pkg_a to Profile A queue (capacity=3)
+        add_to_thaw_queue(pkg_a, rotation_plan=plan_a, actor='test')
+
+        # Profile A: 1 of 3 used
+        check_time_a = plan_a.planned_thaw_start_at + timedelta(hours=1)
+        result_a = check_thaw_capacity_at_time(self.thaw_profile, check_time_a)
+        self.assertEqual(result_a['current_count'], 1)
+        self.assertTrue(result_a['available'])
+
+        # Profile B: 0 of 1 used (must be isolated from Profile A)
+        result_b = check_thaw_capacity_at_time(profile_b, check_time_a)
+        self.assertEqual(result_b['current_count'], 0)
+        self.assertTrue(result_b['available'])
+
+        # Fill Profile B to capacity
+        add_to_thaw_queue(pkg_b, rotation_plan=plan_b, actor='test')
+        check_time_b = plan_b.planned_thaw_start_at + timedelta(hours=1)
+        result_b_full = check_thaw_capacity_at_time(profile_b, check_time_b)
+        self.assertEqual(result_b_full['current_count'], 1)
+        self.assertFalse(result_b_full['available'])
+
+        # Profile A still has capacity (not affected by Profile B)
+        result_a_still = check_thaw_capacity_at_time(self.thaw_profile, check_time_a)
+        self.assertEqual(result_a_still['current_count'], 1)
+        self.assertTrue(result_a_still['available'])
+
+    def test_cross_profile_interval_overlap_isolation(self):
+        """Interval overlap check must be scoped to the same profile."""
+        profile_b = ThawProfile.objects.create(
+            name='Profile B2', default_duration=timedelta(hours=6),
+            minimum_duration=timedelta(hours=3),
+            buffer_duration=timedelta(hours=1), thaw_capacity=1,
+        )
+
+        pkg_a = self._create_package(state=PackageState.FROZEN, barcode='ISO2-A1')
+        pkg_b = self._create_package(state=PackageState.FROZEN, barcode='ISO2-B1')
+
+        target = timezone.now() + timedelta(days=3)
+        plan_a = create_rotation_plan(pkg_a, target, self.freeze_profile,
+                                      self.thaw_profile, actor='test')
+        plan_b = create_rotation_plan(pkg_b, target, self.freeze_profile,
+                                      profile_b, actor='test')
+
+        add_to_thaw_queue(pkg_a, rotation_plan=plan_a, actor='test')
+        add_to_thaw_queue(pkg_b, rotation_plan=plan_b, actor='test')
+
+        # Overlap check for Profile A must not see Profile B entries
+        overlaps_a = check_thaw_interval_overlap(
+            self.thaw_profile,
+            plan_a.planned_thaw_start_at,
+            plan_a.target_ready_at,
+        )
+        self.assertEqual(len(overlaps_a), 1)
+
+        overlaps_b = check_thaw_interval_overlap(
+            profile_b,
+            plan_b.planned_thaw_start_at,
+            plan_b.target_ready_at,
+        )
+        self.assertEqual(len(overlaps_b), 1)
+
 
 # ============================================================
 # TEST 8: Repeated rotation cycle analysis

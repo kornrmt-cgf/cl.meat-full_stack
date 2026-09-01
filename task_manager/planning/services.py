@@ -513,7 +513,10 @@ def check_thaw_capacity_at_time(profile, target_time, exclude_package=None):
     """
     Check thaw capacity at a specific point in time.
 
-    Counts active thaw queue entries that overlap with the target time.
+    Counts active thaw queue entries that overlap with the target time,
+    scoped to the given ThawProfile.  Entries from other profiles are
+    excluded so that each profile's capacity is independent.
+
     An entry overlaps if: entry.planned_start_at <= target_time < entry.target_ready_at
 
     Args:
@@ -525,6 +528,7 @@ def check_thaw_capacity_at_time(profile, target_time, exclude_package=None):
         dict: {available, current_count, max_capacity}
     """
     active_entries = ThawQueueEntry.objects.filter(
+        rotation_plan__thaw_profile=profile,
         status__in=[QueueStatus.QUEUED, QueueStatus.READY_TO_START, QueueStatus.STARTED],
         planned_start_at__lte=target_time,
         target_ready_at__gt=target_time,

@@ -1,39 +1,77 @@
 # CL.MEAT TaskManager
 
-ระบบจัดการงานและตารางเวลาสำหรับพนักงาน — Workforce Task & Scheduling System
+ระบบจัดการงาน ตารางเวลา และสินค้าคงคลังสำหรับร้านเนื้อ — Workforce Task, Scheduling & Inventory System
+
+## Architecture Overview
+
+```
+tasks/            — Core task management (Task, TaskAssignment, TaskActivity)
+operations/       — Worker operational tasks (WorkerTask, TaskEvent, RotationEvent)
+                   — Worker UI views, barcode scanning, task board
+inventory/        — Product, Batch, Package, Stock, StockMovement
+planning/         — RotationPlan, RotationCycle, ThawQueue, ThawProfile, CapacityLock
+scheduling/       — Week schedule, TaskTemplate, conflict detection
+common/           — State machine, worker actions
+reports/          — Reporting system
+notifications/    — Notification system
+dashboard/        — Manager dashboard
+accounts/         — User model (userid login), EmployeeProfile, Role, Team
+```
 
 ## ฟีเจอร์หลัก
 
-### Milestone 1 — Core Task Workflow
+### Inventory (Phase 03)
+- Product / Batch / Package / Stock / StockMovement
+- Stock calculation: one authoritative rule — SUM(weight) of active packages
+- Barcode generation with concurrency-safe sequence
+- Decimal pricing (no floating-point)
+- Stock movement audit trail (RECEIVE, PACK, MOVE, SELL, DISCARD)
+
+### Freeze / Thaw / Rotation (Phase 04)
+- RotationCycle: multi-cycle package lifecycle tracking
+- Freeze lifecycle: start → check → complete
+- Thaw queue: per-profile capacity, interval-overlap, deterministic ordering
+- CapacityLock: serialized admission via PostgreSQL row locking
+- Refreeze support with full history preservation
+
+### Task Manager Integration (Phase 05)
+- WorkerTask linked to RotationPlan lifecycle
+- Atomic claim: only one worker per task (SELECT FOR UPDATE)
+- Task ownership: only real Django User instances (isinstance check)
+- Fail-closed dispatch: unknown task types rejected
+- Idempotent completion, stale task detection
+
+### Worker Operations (Phase 06)
+- Thai-language task board (งานของฉัน)
+- Claim / Start / Complete / Cancel workflow
+- Mandatory barcode confirmation for completion
+- Cancel restricted to claimant for CLAIMED/IN_PROGRESS tasks
+- AJAX polling with 30s interval
+- Alpine.js confirmation dialogs
+
+### Core Task Workflow
 - สร้าง/แก้ไข/ลบงาน
 - มอบหมายงานให้พนักงาน
 - สถานะงาน: กำหนดไว้ → รับงาน → กำลังทำ → เสร็จ/มีปัญหา/ข้อผิดพลาด
 - รายงานปัญหาและข้อผิดพลาด
 - ประวัติการเปลี่ยนสถานะ
 
-### Milestone 2 — Scheduling & Queue
+### Scheduling & Queue
 - ตารางงานรายสัปดาห์
 - แม่แบบงาน (TaskTemplate) พร้อม recurrence
 - Drag-and-drop reordering
 - Conflict detection
 - Reschedule endpoint
 
-### Milestone 3 — Dashboard & Reporting
+### Dashboard & Reporting
 - Manager dashboard พร้อมสถิติ
 - รายงานสถานะ/พนักงาน/ประสิทธิภาพ
 - ภาระงานพนักงาน (Workload)
 - ภาพรวมทีม
 
-### Milestone 4 — Automation & Notifications
-- ระบบแจ้งเตือน (popup dropdown)
-- ตรวจจับงานเกินกำหนด
-- เตือนงานที่กำลังจะเริ่ม
-- Notification preferences
-
 ### Task Marketplace
 - โหมดงาน: มอบหมายเฉพาะคน หรือ เปิดให้แย่งงาน
 - ค่าตอบแทน (reward) สำหรับงานแต่ละงาน
-- แจ้งเตือนเมื่อมีงานเปิดรับใหม่
 - แย่งงานแบบ atomic (ป้องกัน race condition)
 
 ## การติดตั้ง
@@ -163,6 +201,20 @@ python manage.py createsuperuser     # สร้าง admin
 
 ## Tech Stack
 
-- **Backend:** Django 4.2 + SQLite
+- **Backend:** Django 5.2 LTS + PostgreSQL (staging) / SQLite (development)
 - **Frontend:** Tailwind CSS (CDN) + Alpine.js + HTMX
 - **Timezone:** Asia/Bangkok (UTC+7)
+
+## Testing
+
+```bash
+# Django checks
+python manage.py check
+python manage.py makemigrations --check --dry-run
+
+# Full test suite (SQLite)
+python manage.py test
+
+# PostgreSQL concurrency tests (requires staging DB)
+DJANGO_ENV=staging python manage.py test
+```

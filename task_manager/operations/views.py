@@ -416,7 +416,15 @@ class BarcodeScanView(LoginRequiredMixin, View):
 # ============================================================
 
 class TaskStatusAJAXView(LoginRequiredMixin, View):
-    """AJAX endpoint สำหรับดึงสถานะงาน (for polling / HTMX)"""
+    """AJAX endpoint สำหรับดึงสถานะงาน (for polling / HTMX)
+
+    Authorization:
+    - PENDING tasks: visible to all authenticated workers (open marketplace)
+    - CLAIMED/IN_PROGRESS: only the claimant may poll full details
+    - COMPLETED/CANCELLED: only the claimant may poll
+    - claimed_by_id is only returned to the claimant (prevents ID enumeration)
+    - claimed_by_name is returned for display (who claimed it)
+    """
 
     def get(self, request, pk):
         try:
@@ -426,15 +434,28 @@ class TaskStatusAJAXView(LoginRequiredMixin, View):
         except WorkerTask.DoesNotExist:
             return JsonResponse({'error': 'ไม่พบงาน'}, status=404)
 
-        return JsonResponse({
+        # Authorization: CLAIMED/IN_PROGRESS/COMPLETED tasks
+        # only visible to the claimant
+        is_claimant = task.claimed_by_id == request.user.pk
+        is_pending = task.status == TaskStatus.PENDING
+
+        if not is_pending and not is_claimant:
+            return JsonResponse({'error': 'ไม่มีสิทธิ์เข้าถึงงานนี้'}, status=403)
+
+        data = {
             'task_id': task.pk,
             'status': task.status,
             'status_label': TASK_STATUS_LABELS.get(task.status, task.status),
-            'claimed_by': str(task.claimed_by) if task.claimed_by else None,
-            'claimed_by_id': task.claimed_by_id,
+            'claimed_by_name': str(task.claimed_by) if task.claimed_by else None,
             'package_state': task.package.current_state,
             'is_overdue': task.is_overdue,
-        })
+        }
+
+        # Only expose claimed_by_id to the claimant (prevents ID enumeration)
+        if is_claimant:
+            data['claimed_by_id'] = task.claimed_by_id
+
+        return JsonResponse(data)
 
 
 class TaskListAJAXView(LoginRequiredMixin, View):
