@@ -71,21 +71,21 @@ def claim_task(task, worker):
     Uses SELECT FOR UPDATE on the task row to serialize concurrent claims.
     Exactly one worker can claim a given task.
 
-    Invariant: CLAIMED tasks always have claimed_by assigned.
-    For User instances, claimed_by is set to the User.
-    For string identifiers, claimed_by stays NULL but the actor
-    is recorded in the TASK_CLAIMED event.
+    Invariant: CLAIMED tasks always have claimed_by set to a real User.
+    String actors are rejected — only Django User instances may claim.
 
     Args:
         task: WorkerTask instance (or pk — will be re-fetched)
-        worker: User instance or string identifier
+        worker: Django User instance (required)
 
     Returns:
         WorkerTask: the claimed task
 
     Raises:
-        ValueError: if task is not claimable
+        ValueError: if task is not claimable or worker is not a User
     """
+    _assert_user(worker)
+
     # Lock the task row
     task = WorkerTask.objects.select_for_update().get(pk=task.pk)
 
@@ -97,10 +97,7 @@ def claim_task(task, worker):
     now = timezone.now()
     task.status = TaskStatus.CLAIMED
     task.claimed_at = now
-
-    # Assign claimant — User instances get claimed_by FK set
-    if hasattr(worker, 'pk'):
-        task.claimed_by = worker
+    task.claimed_by = worker
 
     task.save(update_fields=[
         'status', 'claimed_by', 'claimed_at', 'updated_at'
@@ -120,19 +117,21 @@ def start_task(task, worker):
     Transition a CLAIMED task to IN_PROGRESS.
 
     Only the claiming worker may start the task.
-    CLAIMED tasks must have claimed_by assigned.
+    CLAIMED tasks must have claimed_by assigned to a real User.
 
     Args:
         task: WorkerTask instance
-        worker: the worker who claimed the task
+        worker: Django User instance (required, must be the claimant)
 
     Returns:
         WorkerTask
 
     Raises:
         ValueError: if task is not in CLAIMED state, has no claimant,
-                     or is claimed by a different worker
+                     worker is not a User, or is claimed by a different worker
     """
+    _assert_user(worker)
+
     task = WorkerTask.objects.select_for_update().get(pk=task.pk)
 
     if task.status != TaskStatus.CLAIMED:
@@ -147,7 +146,7 @@ def start_task(task, worker):
         )
 
     # Verify same worker who claimed
-    if hasattr(worker, 'pk') and task.claimed_by_id != worker.pk:
+    if task.claimed_by_id != worker.pk:
         raise ValueError(
             "Cannot start task: claimed by different worker"
         )
@@ -176,20 +175,29 @@ def complete_task(task, worker=None, notes='', **kwargs):
     Task completion is idempotent: if already COMPLETED, returns
     the task without re-executing.
 
+    Ownership rules:
+        - worker must be a real Django User instance (not None, not a string)
+        - PENDING tasks are auto-claimed by the worker before execution
+        - CLAIMED/IN_PROGRESS tasks require the worker to be the claimant
+
     Args:
         task: WorkerTask instance
-        worker: the worker completing the task (positional or 'actor' kwarg)
+        worker: Django User instance (required — positional or 'actor' kwarg)
         notes: optional completion notes
 
     Returns:
         dict: {'task': WorkerTask, 'transitions': [...]}
 
     Raises:
-        ValueError: if task cannot be completed
+        ValueError: if task cannot be completed (no worker, wrong owner, etc.)
     """
     # Backward compat: accept actor= keyword
     if worker is None:
         worker = kwargs.get('actor', None)
+
+    # Require a real User for task execution
+    _assert_user(worker)
+
     # Remember original object for in-place refresh at the end
     original_task = task
     task = WorkerTask.objects.select_for_update().get(pk=task.pk)
@@ -205,12 +213,11 @@ def complete_task(task, worker=None, notes='', **kwargs):
             f"Cannot complete task: no handler for task type {task.task_type}"
         )
 
-    # Backward compat: auto-claim and auto-start PENDING tasks
+    # Auto-claim and auto-start PENDING tasks (worker is already validated as User)
     if task.status == TaskStatus.PENDING:
         task.status = TaskStatus.CLAIMED
         task.claimed_at = now
-        if hasattr(worker, 'pk'):
-            task.claimed_by = worker
+        task.claimed_by = worker
         task.save(update_fields=['status', 'claimed_by', 'claimed_at', 'updated_at'])
         _log_event(task, 'TASK_CLAIMED', actor=_actor_name(worker))
 
@@ -221,7 +228,11 @@ def complete_task(task, worker=None, notes='', **kwargs):
 
     elif task.status == TaskStatus.CLAIMED:
         # Ownership: only the claimant may execute
-        if hasattr(worker, 'pk') and task.claimed_by_id and task.claimed_by_id != worker.pk:
+        if not task.claimed_by_id:
+            raise ValueError(
+                "Cannot complete task: CLAIMED task has no claimant"
+            )
+        if task.claimed_by_id != worker.pk:
             raise ValueError(
                 "Cannot complete task: claimed by different worker"
             )
@@ -232,7 +243,11 @@ def complete_task(task, worker=None, notes='', **kwargs):
 
     elif task.status == TaskStatus.IN_PROGRESS:
         # Ownership: only the claimant may complete
-        if hasattr(worker, 'pk') and task.claimed_by_id and task.claimed_by_id != worker.pk:
+        if not task.claimed_by_id:
+            raise ValueError(
+                "Cannot complete task: IN_PROGRESS task has no claimant"
+            )
+        if task.claimed_by_id != worker.pk:
             raise ValueError(
                 "Cannot complete task: claimed by different worker"
             )
@@ -252,8 +267,7 @@ def complete_task(task, worker=None, notes='', **kwargs):
     task.status = TaskStatus.COMPLETED
     task.completed_at = now
     task.notes = notes
-    if hasattr(worker, 'pk'):
-        task.completed_by = worker
+    task.completed_by = worker
     task.save(update_fields=[
         'status', 'completed_at', 'completed_by', 'notes', 'updated_at'
     ])
@@ -469,6 +483,27 @@ def cancel_tasks_for_plan(plan, actor='system', reason=''):
 # ============================================================
 # HELPERS
 # ============================================================
+
+def _assert_user(worker):
+    """Validate that worker is a real Django User instance.
+
+    Raises ValueError for None, strings, or non-User objects.
+    Ownership authorization requires an actual User with a pk.
+    """
+    if worker is None:
+        raise ValueError(
+            "Worker identity is required. Cannot operate without a User."
+        )
+    if isinstance(worker, str):
+        raise ValueError(
+            f"String actor '{worker}' cannot be used for operational ownership. "
+            f"A real Django User instance is required."
+        )
+    if not hasattr(worker, 'pk') or worker.pk is None:
+        raise ValueError(
+            f"Worker must be a saved Django User instance with a pk."
+        )
+
 
 def _actor_name(actor):
     if hasattr(actor, 'pk'):

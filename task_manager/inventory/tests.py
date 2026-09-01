@@ -609,16 +609,14 @@ class WorkerTaskCompletionTest(InventoryBaseTestCase):
         self.assertEqual(result2['task'].status, TaskStatus.COMPLETED)
         self.assertEqual(result2['transitions'], [])
 
-    def test_complete_with_string_actor(self):
-        """complete_task should handle string actor (for backward compat)."""
+    def test_complete_requires_user_not_string(self):
+        """complete_task rejects string actors — ownership requires a real User."""
         pkg = create_package(self.product, self.batch, 1.0)
         future = timezone.now() + timedelta(days=3)
         plan = create_rotation_plan(pkg, future, self.freeze_profile, self.thaw_profile)
         freeze_task = plan.worker_tasks.filter(task_type='FREEZE_START').first()
-        result = complete_task(freeze_task, actor='system')
-        self.assertEqual(freeze_task.status, TaskStatus.COMPLETED)
-        pkg.refresh_from_db()
-        self.assertEqual(pkg.current_state, 'FREEZING')
+        with self.assertRaises(ValueError):
+            complete_task(freeze_task, actor='system')
 
 
 # ============================================================

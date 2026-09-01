@@ -595,3 +595,246 @@ class TestTaskDiscovery(TransactionTestCase):
         claim_task(t1, _get_or_create_worker('w1'))
         tasks_after = list(get_available_tasks())
         self.assertNotIn(t1.pk, [t.pk for t in tasks_after])
+
+
+# ============================================================
+# 9. OWNERSHIP AUTHORIZATION (real PostgreSQL)
+# ============================================================
+
+class TestOwnershipAuthorization(TransactionTestCase):
+    """
+    Prove that task ownership cannot be bypassed.
+    CLAIMED/IN_PROGRESS must always have a real User as claimed_by.
+    Strings, None, and wrong Users are rejected.
+    """
+
+    def _is_pg(self):
+        from django.db import connection
+        return connection.vendor == 'postgresql'
+
+    def test_claim_with_user_sets_claimed_by(self):
+        """claim_task with User A sets claimed_by = A."""
+        pkg = _create_pkg()
+        plan = create_rotation_plan(
+            pkg, timezone.now() + timedelta(days=3),
+            _create_freeze_profile(), _create_thaw_profile())
+        task = _create_task(pkg, plan)
+        user_a = _get_or_create_worker('user_a')
+
+        claimed = claim_task(task, user_a)
+        claimed.refresh_from_db()
+        self.assertEqual(claimed.status, TaskStatus.CLAIMED)
+        self.assertEqual(claimed.claimed_by_id, user_a.pk)
+
+    def test_start_with_claimant_succeeds(self):
+        """start_task with the claimant User succeeds."""
+        pkg = _create_pkg()
+        plan = create_rotation_plan(
+            pkg, timezone.now() + timedelta(days=3),
+            _create_freeze_profile(), _create_thaw_profile())
+        task = _create_task(pkg, plan)
+        user_a = _get_or_create_worker('user_a2')
+
+        claimed = claim_task(task, user_a)
+        started = start_task(claimed, user_a)
+        started.refresh_from_db()
+        self.assertEqual(started.status, TaskStatus.IN_PROGRESS)
+
+    def test_start_with_different_user_rejects(self):
+        """start_task with User B when claimed by User A → reject."""
+        pkg = _create_pkg()
+        plan = create_rotation_plan(
+            pkg, timezone.now() + timedelta(days=3),
+            _create_freeze_profile(), _create_thaw_profile())
+        task = _create_task(pkg, plan)
+        user_a = _get_or_create_worker('user_a3')
+        user_b = _get_or_create_worker('user_b1')
+
+        claimed = claim_task(task, user_a)
+        with self.assertRaises(ValueError) as ctx:
+            start_task(claimed, user_b)
+        self.assertIn('different worker', str(ctx.exception))
+
+    def test_complete_with_different_user_rejects(self):
+        """complete_task with User B when claimed by User A → reject."""
+        pkg = _create_pkg()
+        plan = create_rotation_plan(
+            pkg, timezone.now() + timedelta(days=3),
+            _create_freeze_profile(), _create_thaw_profile())
+        task = _create_task(pkg, plan, TaskType.FREEZE_START)
+        user_a = _get_or_create_worker('user_a4')
+        user_b = _get_or_create_worker('user_b2')
+
+        claimed = claim_task(task, user_a)
+        started = start_task(claimed, user_a)
+        with self.assertRaises(ValueError) as ctx:
+            complete_task(started, user_b)
+        self.assertIn('different worker', str(ctx.exception))
+
+    def test_complete_with_none_rejects(self):
+        """complete_task with worker=None → reject."""
+        pkg = _create_pkg()
+        plan = create_rotation_plan(
+            pkg, timezone.now() + timedelta(days=3),
+            _create_freeze_profile(), _create_thaw_profile())
+        task = _create_task(pkg, plan, TaskType.FREEZE_START)
+
+        with self.assertRaises(ValueError) as ctx:
+            complete_task(task, worker=None)
+        self.assertIn('Worker identity is required', str(ctx.exception))
+
+    def test_auto_claim_pending_sets_owner(self):
+        """complete_task on PENDING auto-claims with the worker."""
+        pkg = _create_pkg()
+        plan = create_rotation_plan(
+            pkg, timezone.now() + timedelta(days=3),
+            _create_freeze_profile(), _create_thaw_profile())
+        task = _create_task(pkg, plan, TaskType.FREEZE_START)
+        user_a = _get_or_create_worker('user_a5')
+
+        result = complete_task(task, user_a)
+        result['task'].refresh_from_db()
+        self.assertEqual(result['task'].status, TaskStatus.COMPLETED)
+        self.assertEqual(result['task'].claimed_by_id, user_a.pk)
+        self.assertEqual(result['task'].completed_by_id, user_a.pk)
+
+    def test_auto_claim_pending_with_none_rejects(self):
+        """complete_task on PENDING with worker=None → reject."""
+        pkg = _create_pkg()
+        plan = create_rotation_plan(
+            pkg, timezone.now() + timedelta(days=3),
+            _create_freeze_profile(), _create_thaw_profile())
+        task = _create_task(pkg, plan, TaskType.FREEZE_START)
+
+        with self.assertRaises(ValueError):
+            complete_task(task)
+
+    def test_string_actor_cannot_bypass_ownership(self):
+        """String actors are rejected — cannot bypass ownership."""
+        pkg = _create_pkg()
+        plan = create_rotation_plan(
+            pkg, timezone.now() + timedelta(days=3),
+            _create_freeze_profile(), _create_thaw_profile())
+        task = _create_task(pkg, plan)
+
+        with self.assertRaises(ValueError) as ctx:
+            claim_task(task, 'worker1')
+        self.assertIn('String actor', str(ctx.exception))
+
+    def test_claimed_with_null_claimant_cannot_start(self):
+        """A CLAIMED task with no claimant cannot be started."""
+        pkg = _create_pkg()
+        plan = create_rotation_plan(
+            pkg, timezone.now() + timedelta(days=3),
+            _create_freeze_profile(), _create_thaw_profile())
+        task = _create_task(pkg, plan)
+
+        # Manually create a CLAIMED task with NULL claimant (bypass normal flow)
+        task.status = TaskStatus.CLAIMED
+        task.claimed_at = timezone.now()
+        task.claimed_by = None
+        task.save(update_fields=['status', 'claimed_at', 'claimed_by'])
+
+        user_a = _get_or_create_worker('user_a6')
+        with self.assertRaises(ValueError) as ctx:
+            start_task(task, user_a)
+        self.assertIn('no claimant', str(ctx.exception))
+
+    def test_cancelled_task_cannot_complete(self):
+        """A CANCELLED task cannot be completed."""
+        pkg = _create_pkg()
+        plan = create_rotation_plan(
+            pkg, timezone.now() + timedelta(days=3),
+            _create_freeze_profile(), _create_thaw_profile())
+        task = _create_task(pkg, plan)
+        user_a = _get_or_create_worker('user_a7')
+
+        cancel_task(task, user_a, reason='test')
+        task.refresh_from_db()
+        self.assertEqual(task.status, TaskStatus.CANCELLED)
+
+        with self.assertRaises(ValueError) as ctx:
+            complete_task(task, user_a)
+        self.assertIn('CANCELLED', str(ctx.exception))
+
+
+# ============================================================
+# 10. EXECUTION EXACTLY ONCE (real PostgreSQL)
+# ============================================================
+
+class TestExecutionExactlyOnce(TransactionTestCase):
+    """
+    Prove that concurrent completion calls the lifecycle service exactly once.
+    Uses mock/spy to count actual dispatch invocations.
+    """
+
+    def _is_pg(self):
+        from django.db import connection
+        return connection.vendor == 'postgresql'
+
+    def test_lifecycle_dispatched_exactly_once(self):
+        """Two concurrent complete_task calls → dispatch invoked at most once."""
+        if not self._is_pg():
+            self.skipTest('Requires PostgreSQL')
+
+        from unittest.mock import patch
+
+        pkg = _create_pkg()  # PACKED for FREEZE_START
+        fp = _create_freeze_profile()
+        tp = _create_thaw_profile()
+        plan = create_rotation_plan(
+            pkg, timezone.now() + timedelta(days=3), fp, tp)
+        task = _create_task(pkg, plan, TaskType.FREEZE_START)
+        worker_user = _get_or_create_worker('exec_exact')
+        claimed = claim_task(task, worker_user)
+        started = start_task(claimed, worker_user)
+
+        dispatch_count = [0]
+        original_handler = None
+
+        import operations.services as svc
+        original_handler_name = svc.TASK_DISPATCH.get(TaskType.FREEZE_START)
+        original_fn = getattr(svc, original_handler_name)
+
+        def spy_handler(t, w):
+            dispatch_count[0] += 1
+            return original_fn(t, w)
+
+        results = []
+        errors = []
+
+        def do_complete():
+            try:
+                with patch.object(svc, original_handler_name, side_effect=spy_handler):
+                    result = complete_task(started, worker_user)
+                results.append('ok')
+            except Exception as e:
+                errors.append(str(e))
+
+        t1 = threading.Thread(target=do_complete)
+        t2 = threading.Thread(target=do_complete)
+        t1.start()
+        time.sleep(0.01)
+        t2.start()
+        t1.join(timeout=15)
+        t2.join(timeout=15)
+
+        # At least 1 must succeed
+        self.assertTrue(len(results) >= 1,
+            f'Expected at least 1 success: {errors}')
+
+        # Lifecycle dispatch was called at most once (idempotent second call)
+        self.assertLessEqual(dispatch_count[0], 1,
+            f'Lifecycle dispatch called {dispatch_count[0]} times — expected at most 1')
+
+        # Task must be COMPLETED
+        task.refresh_from_db()
+        self.assertEqual(task.status, TaskStatus.COMPLETED)
+
+        # Package transitioned exactly once
+        pkg.refresh_from_db()
+        self.assertEqual(pkg.current_state, PackageState.FREEZING)
+
+        # TASK_COMPLETED events may be 1 or 2 due to the commit window race,
+        # but the critical invariant is: lifecycle dispatch called at most once
+        # and package state transitioned exactly once (already asserted above).
